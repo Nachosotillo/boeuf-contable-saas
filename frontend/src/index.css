@@ -1,0 +1,188 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    --sidebar-width: 220px;
+    --topbar-height: 56px;
+    --radius: 10px;
+    --transition: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  body {
+    @apply bg-surface-50 text-surface-900 font-sans antialiased;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* Scrollbars */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { @apply bg-transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-surface-300 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-surface-400; }
+
+  /* Selection */
+  ::selection { @apply bg-brand-100 text-brand-800; }
+}
+
+@layer components {
+  /* ── Buttons ─────────────────────────────────────────────────────── */
+  .btn {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
+           border transition-all duration-150 cursor-pointer select-none whitespace-nowrap;
+  }
+  .btn:disabled { @apply opacity-50 cursor-not-allowed pointer-events-none; }
+
+  .btn-primary {
+    @apply btn bg-brand-500 text-white border-brand-500
+           hover:bg-brand-600 hover:border-brand-600
+           active:scale-[0.98] shadow-sm;
+  }
+  .btn-secondary {
+    @apply btn bg-surface-0 text-surface-700 border-surface-200
+           hover:bg-surface-50 hover:border-surface-300;
+  }
+  .btn-danger {
+    @apply btn bg-danger text-white border-danger
+           hover:bg-red-600 hover:border-red-600;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-surface-600 border-transparent
+           hover:bg-surface-100 hover:text-surface-900;
+  }
+  .btn-sm { @apply text-xs px-2.5 py-1 rounded-md gap-1; }
+  .btn-lg { @apply text-base px-5 py-2.5; }
+  .btn-icon { @apply p-1.5 rounded-lg border border-transparent hover:bg-surface-100; }
+
+  /* ── Inputs ──────────────────────────────────────────────────────── */
+  .input {
+    @apply w-full px-3 py-2 text-sm bg-white border border-surface-200 rounded-lg
+           text-surface-900 placeholder-surface-400
+           focus:outline-none focus:border-brand-500 focus:shadow-input-focus
+           transition-all duration-150;
+  }
+  .input-error { @apply border-danger focus:border-danger focus:shadow-none; }
+  .input-sm { @apply px-2.5 py-1.5 text-xs rounded-md; }
+
+  /* ── Cards ───────────────────────────────────────────────────────── */
+  .card {
+    @apply bg-white rounded-xl border border-surface-200 shadow-card;
+  }
+  .card-hover { @apply hover:shadow-card-hover transition-shadow duration-200; }
+
+  /* ── Labels ──────────────────────────────────────────────────────── */
+  .label {
+    @apply block text-xs font-medium text-surface-500 mb-1;
+  }
+
+  /* ── Badges ──────────────────────────────────────────────────────── */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-green  { @apply badge bg-success-light text-success border border-success/20; }
+  .badge-blue   { @apply badge bg-info-light text-info border border-info/20; }
+  .badge-amber  { @apply badge bg-warning-light text-warning border border-warning/20; }
+  .badge-red    { @apply badge bg-danger-light text-danger border border-danger/20; }
+  .badge-gray   { @apply badge bg-surface-100 text-surface-600 border border-surface-200; }
+
+  /* ── Table ───────────────────────────────────────────────────────── */
+  .table-wrap {
+    @apply border border-surface-200 rounded-xl overflow-hidden overflow-x-auto;
+  }
+  .data-table { @apply w-full border-collapse text-sm min-w-[600px]; }
+  .data-table thead tr { @apply bg-surface-50; }
+  .data-table th {
+    @apply px-4 py-2.5 text-left text-xs font-semibold text-surface-500
+           uppercase tracking-wide border-b border-surface-200 whitespace-nowrap;
+  }
+  .data-table td {
+    @apply px-4 py-3 border-b border-surface-100 text-surface-700;
+  }
+  .data-table tbody tr:last-child td { @apply border-b-0; }
+  .data-table tbody tr:hover td { @apply bg-surface-50/60; }
+  .data-table .text-right { text-align: right; }
+  .data-table .font-mono { @apply font-mono text-xs; }
+
+  /* ── Sidebar ─────────────────────────────────────────────────────── */
+  .nav-item {
+    @apply flex items-center gap-2.5 px-3 py-2 mx-2 rounded-lg text-sm
+           text-surface-600 cursor-pointer transition-all duration-150
+           border border-transparent;
+  }
+  .nav-item:hover { @apply bg-surface-100 text-surface-900; }
+  .nav-item.active {
+    @apply bg-brand-50 text-brand-700 border-brand-200/60 font-medium;
+  }
+  .nav-item.active i { @apply text-brand-500; }
+  .nav-section {
+    @apply px-5 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-widest
+           text-surface-400;
+  }
+
+  /* ── Modal ───────────────────────────────────────────────────────── */
+  .modal-overlay {
+    @apply fixed inset-0 bg-surface-900/40 backdrop-blur-sm z-50
+           flex items-center justify-center p-4 animate-fade-in;
+  }
+  .modal-box {
+    @apply bg-white rounded-2xl shadow-modal w-full max-h-[90vh] flex flex-col
+           animate-slide-up;
+  }
+  .modal-header {
+    @apply flex items-center justify-between px-6 py-4
+           border-b border-surface-100 flex-shrink-0;
+  }
+  .modal-body { @apply px-6 py-5 overflow-y-auto flex-1; }
+  .modal-footer {
+    @apply flex justify-end gap-2 px-6 py-4
+           border-t border-surface-100 flex-shrink-0;
+  }
+
+  /* ── Metric card ─────────────────────────────────────────────────── */
+  .metric-card {
+    @apply card p-4 flex flex-col gap-1;
+  }
+  .metric-label { @apply text-xs text-surface-500 font-medium; }
+  .metric-value { @apply text-2xl font-display font-semibold tracking-tight; }
+  .metric-sub   { @apply text-xs text-surface-400; }
+
+  /* ── Section header ──────────────────────────────────────────────── */
+  .section-header {
+    @apply flex items-center justify-between mb-4;
+  }
+  .section-title {
+    @apply text-base font-semibold text-surface-900;
+  }
+
+  /* ── Cuadre indicator ────────────────────────────────────────────── */
+  .cuadre-ok   { @apply bg-success/10 border border-success/30 text-success rounded-lg px-4 py-2.5 text-sm font-medium; }
+  .cuadre-fail { @apply bg-danger/10 border border-danger/30 text-danger rounded-lg px-4 py-2.5 text-sm font-medium; }
+
+  /* ── Empty state ─────────────────────────────────────────────────── */
+  .empty-state {
+    @apply flex flex-col items-center justify-center py-16 text-surface-400;
+  }
+  .empty-state i { @apply text-5xl mb-3 opacity-40; }
+  .empty-state p { @apply text-sm; }
+}
+
+/* ── Page transitions ──────────────────────────────────────────────── */
+.page-enter { animation: fadeIn 0.2s ease-out; }
+
+/* ── TXT preview ───────────────────────────────────────────────────── */
+.txt-preview {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  background: #0f1923;
+  color: #00e5a0;
+  padding: 1rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  white-space: pre;
+  line-height: 1.7;
+  max-height: 260px;
+  overflow-y: auto;
+}
