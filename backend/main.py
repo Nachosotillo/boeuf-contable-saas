@@ -131,3 +131,31 @@ app.include_router(tasas.router,        prefix="/api/v1/tasas",        tags=["Ta
 @app.get("/", tags=["Health"])
 async def root():
     return {"status": "ok", "app": "Boeuf Contable SaaS v1.0.0"}
+
+@app.get("/debug", tags=["Health"])
+async def debug_db():
+    try:
+        from database import AsyncSessionLocal
+        from sqlalchemy import select, text
+        from models import Usuario, Empresa
+        
+        async with AsyncSessionLocal() as db:
+            result_users = await db.execute(select(Usuario.email, Usuario.nombre))
+            users = result_users.fetchall()
+            
+            result_empresas = await db.execute(select(Empresa.nombre_razon_social))
+            empresas = result_empresas.fetchall()
+            
+            # Check if tables exist
+            tables_res = await db.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema='public'"))
+            tables = [t[0] for t in tables_res.fetchall()]
+            
+            return {
+                "status": "ok",
+                "tables_count": len(tables),
+                "tables": tables,
+                "users": [{"email": u[0], "nombre": u[1]} for u in users],
+                "empresas": [e[0] for e in empresas]
+            }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
