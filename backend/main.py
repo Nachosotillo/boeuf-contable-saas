@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from database import engine, Base
+from database import engine, Base, AsyncSessionLocal
 from routers import (
     auth, empresas, catalogo, asientos, ajustes,
     reportes, seniat, nomina, inventario, activos,
@@ -21,6 +21,30 @@ async def lifespan(app: FastAPI):
     # Crear tablas si no existen
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    
+    # Crear admin por defecto si no hay usuarios
+    from sqlalchemy import select
+    from models import Usuario, Empresa
+    from routers.auth import hash_password
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Usuario).limit(1))
+        if not result.scalar_one_or_none():
+            # Crear empresa semilla
+            empresa = Empresa(nombre="Empresa Demo C.A.", rif="J-12345678-9")
+            db.add(empresa)
+            await db.flush()
+            # Crear admin semilla
+            admin = Usuario(
+                nombre="Administrador",
+                email="admin@boeuf.com",
+                contrasena_hash=hash_password("admin123"),
+                rol="admin",
+                empresa_id=empresa.id
+            )
+            db.add(admin)
+            await db.commit()
+            print(">>> Usuario admin inicial creado: admin@boeuf.com / admin123")
+
     # Iniciar scheduler (tasa BCV diaria)
     start_scheduler()
     yield
