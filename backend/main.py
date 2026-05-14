@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
                 logger.info("Creando cuenta para El Cuadre Frío C.A...")
                 emp_cuadre = Empresa(
                     nombre_razon_social="El Cuadre Frío C.A.", 
-                    rif="J-12345678-9",
+                    rif="J-11111111-1",
                     tipo_persona=TipoPersonaEnum.juridica
                 )
                 db.add(emp_cuadre)
