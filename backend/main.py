@@ -6,6 +6,7 @@ Python 3.11+ | FastAPI | PostgreSQL | SQLAlchemy 2.0
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import logging
 
 from database import engine, Base, AsyncSessionLocal
 from routers import (
@@ -15,44 +16,51 @@ from routers import (
 )
 from tasks.scheduler import start_scheduler
 
+# Configurar logs básicos
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Crear tablas si no existen
+    # 1. Crear tablas si no existen
+    logger.info("Verificando tablas de base de datos...")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
-    # Crear admin por defecto si no hay usuarios
-    from sqlalchemy import select
-    from models import Usuario, Empresa, TipoPersonaEnum
-    from routers.auth import hash_password
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Usuario).limit(1))
-        if not result.scalar_one_or_none():
-            # Crear empresa semilla
-            empresa = Empresa(
-                nombre_razon_social="Empresa Demo C.A.", 
-                rif="J-12345678-9",
-                tipo_persona=TipoPersonaEnum.juridica
-            )
-            db.add(empresa)
-            await db.flush()
-            # Crear admin semilla
-            admin = Usuario(
-                nombre="Administrador",
-                email="admin@boeuf.com",
-                contrasena_hash=hash_password("admin123"),
-                rol="admin",
-                empresa_id=empresa.id
-            )
-            db.add(admin)
-            await db.commit()
-            print(">>> Usuario admin inicial creado: admin@boeuf.com / admin123")
-
-    # Iniciar scheduler (tasa BCV diaria)
+    # 2. Crear admin por defecto (con manejo de errores para no tumbar la app)
+    try:
+        from sqlalchemy import select
+        from models import Usuario, Empresa, TipoPersonaEnum, RolEnum
+        from routers.auth import hash_password
+        
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(Usuario).limit(1))
+            if not result.scalar_one_or_none():
+                logger.info("Base de datos vacía. Creando usuario admin inicial...")
+                empresa = Empresa(
+                    nombre_razon_social="Empresa Demo C.A.", 
+                    rif="J-12345678-9",
+                    tipo_persona=TipoPersonaEnum.juridica
+                )
+                db.add(empresa)
+                await db.flush()
+                
+                admin = Usuario(
+                    nombre="Administrador",
+                    email="admin@boeuf.com",
+                    contrasena_hash=hash_password("admin123"),
+                    rol=RolEnum.admin,
+                    empresa_id=empresa.id
+                )
+                db.add(admin)
+                await db.commit()
+                logger.info(">>> Usuario admin creado: admin@boeuf.com / admin123")
+    except Exception as e:
+        logger.error(f"Error en la creación del usuario semilla: {e}")
+    
+    # 3. Iniciar scheduler (tasa BCV diaria)
     start_scheduler()
     yield
-
 
 app = FastAPI(
     title="Boeuf Contable SaaS",
@@ -63,7 +71,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # En producción: ["https://tudominio.com"]
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -84,7 +92,6 @@ app.include_router(iva.router,          prefix="/api/v1/iva",          tags=["IV
 app.include_router(igtf.router,         prefix="/api/v1/igtf",         tags=["IGTF"])
 app.include_router(retenciones.router,  prefix="/api/v1/retenciones",  tags=["Retenciones ISLR"])
 app.include_router(tasas.router,        prefix="/api/v1/tasas",        tags=["Tasas BCV"])
-
 
 @app.get("/", tags=["Health"])
 async def root():
