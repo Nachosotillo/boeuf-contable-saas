@@ -119,8 +119,11 @@ export const nominaApi = {
 // ─── Inventario ────────────────────────────────────────────────────────────
 
 export const inventarioApi = {
-  listar: () => api.get('/inventario/'),
-  registrar: (data: unknown) => api.post('/inventario/', data),
+  listarArticulos: () => api.get('/inventario/articulos'),
+  crearArticulo: (data: unknown) => api.post('/inventario/articulos', data),
+  actualizarArticulo: (id: number, data: unknown) => api.put(`/inventario/articulos/${id}`, data),
+  listarMovimientos: (articulo_id?: number) => api.get('/inventario/movimientos', { params: { articulo_id } }),
+  registrarMovimiento: (data: unknown) => api.post('/inventario/movimientos', data),
   saldo: () => api.get('/inventario/saldo'),
 }
 
