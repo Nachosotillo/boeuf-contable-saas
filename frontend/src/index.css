@@ -104,7 +104,7 @@
   .data-table tbody tr:last-child td { @apply border-b-0; }
   .data-table tbody tr:hover td { @apply bg-surface-50/60; }
   .data-table .text-right { text-align: right; }
-  .data-table .font-mono { @apply font-mono text-xs; }
+  .data-table .mono-text { @apply font-mono text-xs; }
 
   /* ── Sidebar ─────────────────────────────────────────────────────── */
   .nav-item {
