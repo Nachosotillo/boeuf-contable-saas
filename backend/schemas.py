@@ -9,7 +9,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from models import (
     TipoPersonaEnum, TipoContribuyenteEnum, RolEnum,
     TipoCuentaEnum, NaturalezaEnum, EstadoFinancieroEnum,
-    TipoAjusteEnum, TipoMovimientoInvEnum, TipoNominaEnum
+    TipoAjusteEnum, TipoMovimientoInvEnum, TipoArticuloInventarioEnum, TipoNominaEnum
 )
 
 
@@ -237,11 +237,37 @@ class NominaCalculadaOut(BaseModel):
 
 # ─── Inventario ───────────────────────────────────────────────────────────────
 
+class ArticuloInventarioCreate(BaseModel):
+    codigo_sku: str = Field(..., min_length=2, max_length=50)
+    descripcion: str = Field(..., min_length=2, max_length=255)
+    tipo: TipoArticuloInventarioEnum
+    unidad_medida: str = "kg"
+    stock_minimo: Decimal = Field(default=0, ge=0, decimal_places=4)
+
+
+class ArticuloInventarioUpdate(BaseModel):
+    descripcion: Optional[str] = None
+    tipo: Optional[TipoArticuloInventarioEnum] = None
+    unidad_medida: Optional[str] = None
+    stock_minimo: Optional[Decimal] = None
+    activo: Optional[bool] = None
+
+
+class ArticuloInventarioOut(ArticuloInventarioCreate):
+    id: int
+    empresa_id: int
+    stock_actual: Decimal
+    activo: bool
+    model_config = {"from_attributes": True}
+
+
 class MovimientoInvCreate(BaseModel):
+    articulo_id: int
     fecha: date
     descripcion: str
     tipo: TipoMovimientoInvEnum
-    unidad: str = "kg"
+    lote: Optional[str] = None
+    fecha_vencimiento: Optional[date] = None
     cantidad: Decimal = Field(..., gt=0, decimal_places=4)
     costo_unitario: Decimal = Field(..., ge=0, decimal_places=4)
 

@@ -68,6 +68,13 @@ class TipoMovimientoInvEnum(str, enum.Enum):
     salida = "S"
 
 
+class TipoArticuloInventarioEnum(str, enum.Enum):
+    materia_prima = "Materia Prima"
+    producto_proceso = "Producto en Proceso"
+    producto_terminado = "Producto Terminado"
+    suministros = "Suministros"
+
+
 class TipoNominaEnum(str, enum.Enum):
     mod = "MOD"
     moi = "MOI"
@@ -116,6 +123,7 @@ class Empresa(Base):
     ajustes: Mapped[List["Ajuste"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     empleados: Mapped[List["NominaEmpleado"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     activos: Mapped[List["ActivoFijo"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
+    articulos_inventario: Mapped[List["ArticuloInventario"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     inventario: Mapped[List["MovimientoInventario"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     iva_compras: Mapped[List["LibroIvaCompra"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
     iva_ventas: Mapped[List["LibroIvaVenta"]] = relationship(back_populates="empresa", cascade="all, delete-orphan")
@@ -340,15 +348,39 @@ class ActivoFijo(Base):
     )
 
 
+class ArticuloInventario(Base):
+    __tablename__ = "articulo_inventario"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    empresa_id: Mapped[int] = mapped_column(ForeignKey("empresa.id", ondelete="CASCADE"), nullable=False, index=True)
+    codigo_sku: Mapped[str] = mapped_column(String(50), nullable=False)
+    descripcion: Mapped[str] = mapped_column(String(255), nullable=False)
+    tipo: Mapped[TipoArticuloInventarioEnum] = mapped_column(SAEnum(TipoArticuloInventarioEnum), nullable=False)
+    unidad_medida: Mapped[str] = mapped_column(String(20), default="kg")
+    stock_minimo: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0)
+    stock_actual: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0)
+    activo: Mapped[bool] = mapped_column(Boolean, default=True)
+    creado_en: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    empresa: Mapped["Empresa"] = relationship(back_populates="articulos_inventario")
+    movimientos: Mapped[List["MovimientoInventario"]] = relationship(back_populates="articulo", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "codigo_sku", name="uq_empresa_sku"),
+    )
+
+
 class MovimientoInventario(Base):
     __tablename__ = "movimiento_inventario"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     empresa_id: Mapped[int] = mapped_column(ForeignKey("empresa.id", ondelete="CASCADE"), nullable=False, index=True)
+    articulo_id: Mapped[int] = mapped_column(ForeignKey("articulo_inventario.id", ondelete="CASCADE"), nullable=False, index=True)
     fecha: Mapped[date] = mapped_column(Date, nullable=False)
     descripcion: Mapped[str] = mapped_column(String(500), nullable=False)
     tipo: Mapped[TipoMovimientoInvEnum] = mapped_column(SAEnum(TipoMovimientoInvEnum), nullable=False)
-    unidad: Mapped[str] = mapped_column(String(20), default="kg")
+    lote: Mapped[Optional[str]] = mapped_column(String(50))
+    fecha_vencimiento: Mapped[Optional[date]] = mapped_column(Date)
     cantidad: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
     costo_unitario: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
     costo_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
@@ -357,6 +389,7 @@ class MovimientoInventario(Base):
     creado_en: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="inventario")
+    articulo: Mapped["ArticuloInventario"] = relationship(back_populates="movimientos")
 
 
 class LibroIvaCompra(Base):
