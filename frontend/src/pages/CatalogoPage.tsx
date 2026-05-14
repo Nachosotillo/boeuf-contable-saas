@@ -56,7 +56,7 @@ export default function CatalogoPage() {
       {isLoading ? <Spinner /> : (
         <div className="table-wrap">
           <table className="data-table">
-            <thead><tr><th>Código</th><th>Nombre</th><th>Tipo</th><th>Naturaleza</th><th>Estado Financiero</th></tr></thead>
+            <thead><tr><th>Código</th><th>Nombre</th><th>Tipo</th><th>Naturaleza</th><th>Subcategoría</th><th>Estado Financiero</th></tr></thead>
             <tbody>
               {cuentasFiltradas.length ? cuentasFiltradas.map(c => (
                 <tr key={c.id}>
@@ -64,9 +64,10 @@ export default function CatalogoPage() {
                   <td>{c.nombre}</td>
                   <td><span className={`badge ${c.tipo === 'Cuenta' ? 'badge-blue' : c.tipo === 'Grupo' ? 'badge-amber' : 'badge-gray'}`}>{c.tipo}</span></td>
                   <td className="text-surface-500 text-xs">{c.naturaleza ?? '—'}</td>
+                  <td className="text-surface-500 text-xs">{c.subcategoria ?? '—'}</td>
                   <td className="text-surface-400 text-xs">{c.estado_financiero ?? '—'}</td>
                 </tr>
-              )) : <tr><td colSpan={5}><EmptyState icon="ti-list" message="Sin resultados" /></td></tr>}
+              )) : <tr><td colSpan={6}><EmptyState icon="ti-list" message="Sin resultados" /></td></tr>}
             </tbody>
           </table>
         </div>
@@ -83,10 +84,13 @@ export default function CatalogoPage() {
               <input className="input" placeholder="Nombre de la cuenta" {...register('nombre', { required: 'Requerido' })} />
             </Field>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <Field label="Tipo"><select className="input" {...register('tipo')}><option value="Cuenta">Cuenta</option><option value="Grupo">Grupo</option><option value="Subgrupo">Subgrupo</option></select></Field>
             <Field label="Naturaleza"><select className="input" {...register('naturaleza')}><option value="Deudora">Deudora</option><option value="Acreedora">Acreedora</option></select></Field>
             <Field label="Estado Financiero"><select className="input" {...register('estado_financiero')}><option value="Situación Financiera">Situación Financiera</option><option value="Estado de Resultado">Estado de Resultado</option><option value="Ninguno">Ninguno</option></select></Field>
+            <Field label="Subcategoría (Opcional)">
+              <input className="input" placeholder="Ej: Activo Corriente" {...register('subcategoria')} />
+            </Field>
           </div>
         </div>
       </Modal>
