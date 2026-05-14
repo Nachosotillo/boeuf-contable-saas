@@ -22,6 +22,13 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 0. Migración forzada automática (añadir columnas faltantes)
+    try:
+        from update_db import migrate
+        await migrate()
+    except Exception as e:
+        logger.warning(f"Error en migración forzada: {e}")
+
     # 1. Crear tablas si no existen
     logger.info("Verificando tablas de base de datos...")
     async with engine.begin() as conn:
