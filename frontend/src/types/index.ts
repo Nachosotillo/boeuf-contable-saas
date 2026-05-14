@@ -39,6 +39,7 @@ export interface CatalogoCuenta {
   tipo: 'Grupo' | 'Subgrupo' | 'Cuenta'
   naturaleza?: 'Deudora' | 'Acreedora'
   estado_financiero?: 'Situación Financiera' | 'Estado de Resultado' | 'Flujo de Caja' | 'Ninguno'
+  subcategoria?: string
   activa: boolean
 }
 
@@ -48,6 +49,7 @@ export interface CuentaCreate {
   tipo: 'Grupo' | 'Subgrupo' | 'Cuenta'
   naturaleza?: 'Deudora' | 'Acreedora'
   estado_financiero?: string
+  subcategoria?: string
 }
 
 // ─── Asientos ──────────────────────────────────────────────────────────────
