@@ -27,36 +27,64 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
-    # 2. Crear admin por defecto (con manejo de errores para no tumbar la app)
+    # 2. Crear usuarios y empresas por defecto
     try:
         from sqlalchemy import select
         from models import Usuario, Empresa, TipoPersonaEnum, RolEnum
         from routers.auth import hash_password
+        from routers.catalogo import sembrar_catalogo_default
         
         async with AsyncSessionLocal() as db:
-            result = await db.execute(select(Usuario).limit(1))
-            if not result.scalar_one_or_none():
-                logger.info("Base de datos vacía. Creando usuario admin inicial...")
-                empresa = Empresa(
-                    nombre_razon_social="Empresa Demo C.A.", 
+            # Crear "El Cuadre Frío C.A."
+            result1 = await db.execute(select(Usuario).where(Usuario.email == "usuario@elcuadrefrio.com"))
+            if not result1.scalar_one_or_none():
+                logger.info("Creando cuenta para El Cuadre Frío C.A...")
+                emp_cuadre = Empresa(
+                    nombre_razon_social="El Cuadre Frío C.A.", 
                     rif="J-12345678-9",
                     tipo_persona=TipoPersonaEnum.juridica
                 )
-                db.add(empresa)
+                db.add(emp_cuadre)
                 await db.flush()
                 
-                admin = Usuario(
-                    nombre="Administrador",
-                    email="admin@boeuf.com",
-                    contrasena_hash=hash_password("admin123"),
+                admin_cuadre = Usuario(
+                    nombre="Usuario",
+                    email="usuario@elcuadrefrio.com",
+                    contrasena_hash=hash_password("cuadre123"),
                     rol=RolEnum.admin,
-                    empresa_id=empresa.id
+                    empresa_id=emp_cuadre.id
                 )
-                db.add(admin)
+                db.add(admin_cuadre)
+                await sembrar_catalogo_default(emp_cuadre.id, db)
                 await db.commit()
-                logger.info(">>> Usuario admin creado: admin@boeuf.com / admin123")
+                logger.info(">>> Creado: usuario@elcuadrefrio.com / cuadre123")
+
+            # Crear "Rickyricon"
+            result2 = await db.execute(select(Usuario).where(Usuario.email == "ricky@rickyricon.com"))
+            if not result2.scalar_one_or_none():
+                logger.info("Creando cuenta para Rickyricon...")
+                emp_ricky = Empresa(
+                    nombre_razon_social="Rickyricon C.A.", 
+                    rif="J-98765432-1",
+                    tipo_persona=TipoPersonaEnum.juridica
+                )
+                db.add(emp_ricky)
+                await db.flush()
+                
+                admin_ricky = Usuario(
+                    nombre="Ricky (Admin)",
+                    email="ricky@rickyricon.com",
+                    contrasena_hash=hash_password("ricky123"),
+                    rol=RolEnum.admin,
+                    empresa_id=emp_ricky.id
+                )
+                db.add(admin_ricky)
+                await sembrar_catalogo_default(emp_ricky.id, db)
+                await db.commit()
+                logger.info(">>> Creado: ricky@rickyricon.com / ricky123")
+
     except Exception as e:
-        logger.error(f"Error en la creación del usuario semilla: {e}")
+        logger.error(f"Error en la creación de cuentas semilla: {e}")
     
     # 3. Iniciar scheduler (tasa BCV diaria)
     start_scheduler()
