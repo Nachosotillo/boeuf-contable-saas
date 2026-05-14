@@ -24,13 +24,17 @@ async def lifespan(app: FastAPI):
     
     # Crear admin por defecto si no hay usuarios
     from sqlalchemy import select
-    from models import Usuario, Empresa
+    from models import Usuario, Empresa, TipoPersonaEnum
     from routers.auth import hash_password
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Usuario).limit(1))
         if not result.scalar_one_or_none():
             # Crear empresa semilla
-            empresa = Empresa(nombre="Empresa Demo C.A.", rif="J-12345678-9")
+            empresa = Empresa(
+                nombre_razon_social="Empresa Demo C.A.", 
+                rif="J-12345678-9",
+                tipo_persona=TipoPersonaEnum.juridica
+            )
             db.add(empresa)
             await db.flush()
             # Crear admin semilla
