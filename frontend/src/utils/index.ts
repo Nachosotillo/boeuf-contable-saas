@@ -77,14 +77,3 @@ export function extractError(err: unknown): string {
   }
   return 'Ocurrió un error inesperado'
 }
-
-// ─── ISLR Cálculo local (misma lógica que backend) ─────────────────────────
-
-export function calcularISLR(salario: number): number {
-  if (salario <= 3000) return 0
-  if (salario <= 5000) return (salario - 3000) * 0.06
-  if (salario <= 10000) return 120 + (salario - 5000) * 0.09
-  if (salario <= 15000) return 570 + (salario - 10000) * 0.12
-  if (salario <= 20000) return 1170 + (salario - 15000) * 0.16
-  return 1970 + (salario - 20000) * 0.34
-}
