@@ -6,8 +6,10 @@ Router: Nómina
 - Generación automática de asiento contable
 """
 
+from datetime import date
+import calendar
 from decimal import Decimal, ROUND_HALF_UP
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -48,45 +50,70 @@ PARAMS = {
     "PEN_PAT":   Decimal("0.09"),
 }
 
-async def calcular_nomina_empleado(empleado: NominaEmpleado, tasa_bcv: Decimal) -> NominaCalculadaOut:
+def get_mondays_in_month(year: int, month: int) -> int:
+    """Calcula cuántos lunes tiene un mes específico."""
+    count = 0
+    matrix = calendar.monthcalendar(year, month)
+    for week in matrix:
+        if week[0] != 0:  # El índice 0 es Lunes en calendar.monthcalendar
+            count += 1
+    return count
+
+async def calcular_nomina_empleado(empleado: NominaEmpleado, tasa_bcv: Decimal, lunes_mes: int = 4) -> NominaCalculadaOut:
     s = empleado.salario_base or Decimal("0")
     r = lambda v: v.quantize(Decimal("0.01"), ROUND_HALF_UP)
+    
+    # 1. Antigüedad (Años de servicio)
+    fecha_ing = empleado.fecha_inicio or date.today()
+    today = date.today()
+    anos = today.year - fecha_ing.year - ((today.month, today.day) < (fecha_ing.month, fecha_ing.day))
+    anos = max(0, anos)
 
-    # Prevenir que porcentaje_ari sea None si la base de datos no lo llenó
+    # 2. Salario Integral (Base + Alícuota Vacaciones + Alícuota Utilidades)
+    # BV: 15 días + 1 por año (tope 30). Utilidades: 30 días.
+    dias_bv = min(15 + anos, 30)
+    dias_util = 30
+    alic_vac = ((s / Decimal("30")) * Decimal(str(dias_bv))) / Decimal("12")
+    alic_util = ((s / Decimal("30")) * Decimal(str(dias_util))) / Decimal("12")
+    salario_integral = s + alic_vac + alic_util
+
+    # 3. ISLR (ARI)
     ari = empleado.porcentaje_ari if empleado.porcentaje_ari is not None else Decimal("0")
-
-    # ISLR: Se aplica el porcentaje exacto de la planilla ARI del empleado
     islr = r(s * (ari / Decimal("100")))
     
-    # Topes Legales
+    # 4. Topes Legales (SSO: 5 SM, RPE: 10 SM)
     tope_sso = PARAMS["SALARIO_MINIMO_BS"] * Decimal("5")
     base_sso = min(s, tope_sso)
     
     tope_rpe = PARAMS["SALARIO_MINIMO_BS"] * Decimal("10")
     base_rpe = min(s, tope_rpe)
     
-    # tasa_bcv puede venir como flotante o decimal, aseguramos Decimal
+    # 5. SSO (Semanal: (Base * 12) / 52)
+    sso_sem = (base_sso * Decimal("12")) / Decimal("52")
+    sso_e = r(sso_sem * PARAMS["SSO_EMP"] * Decimal(str(lunes_mes)))
+    sso_p = r(sso_sem * PARAMS["SSO_PAT"] * Decimal(str(lunes_mes)))
+
+    # 6. RPE (Paro Forzoso)
+    rpe_sem = (base_rpe * Decimal("12")) / Decimal("52")
+    rpe_e = r(rpe_sem * PARAMS["RPE_EMP"] * Decimal(str(lunes_mes)))
+    rpe_p = r(rpe_sem * PARAMS["RPE_PAT"] * Decimal(str(lunes_mes)))
+
+    # 7. FAOV (1% Empleado / 2% Patrono del Salario Integral)
+    faov_e = r(salario_integral * PARAMS["FAOV_EMP"])
+    faov_p = r(salario_integral * PARAMS["FAOV_PAT"])
+    
+    # 8. INCES e Impuesto a las Pensiones
+    inces_e = r(s * PARAMS["INCES_EMP"])
+    inces_p = r(s * PARAMS["INCES_PAT"])
+    
     tasa = Decimal(str(tasa_bcv)) if tasa_bcv else Decimal("36.50")
     piso_pensiones = PARAMS["INGRESO_MINIMO_PENSIONES_USD"] * tasa
     base_pensiones = max(s, piso_pensiones)
-
-    # Deducciones del Empleado
-    sso_e = r(base_sso * PARAMS["SSO_EMP"])
-    rpe_e = r(base_rpe * PARAMS["RPE_EMP"])
-    faov_e = r(s * PARAMS["FAOV_EMP"])
-    inces_e = r(s * PARAMS["INCES_EMP"])
     pen_e = r(s * PARAMS["PEN_EMP"])
+    pen_p = r(base_pensiones * PARAMS["PEN_PAT"])
     
     total_ded = islr + sso_e + rpe_e + faov_e + inces_e + pen_e
     neto = r(s - total_ded)
-
-    # Aportes Patronales
-    sso_p = r(base_sso * PARAMS["SSO_PAT"])
-    rpe_p = r(base_rpe * PARAMS["RPE_PAT"])
-    faov_p = r(s * PARAMS["FAOV_PAT"])
-    inces_p = r(s * PARAMS["INCES_PAT"])
-    pen_p = r(base_pensiones * PARAMS["PEN_PAT"])
-    
     costo = r(s + sso_p + rpe_p + faov_p + inces_p + pen_p)
 
     return NominaCalculadaOut(
@@ -151,6 +178,9 @@ async def listar_empleados(
 
 @router.get("/calcular", response_model=list[NominaCalculadaOut])
 async def calcular_nomina(
+    mes: int = Query(default=date.today().month, ge=1, le=12),
+    anio: int = Query(default=date.today().year),
+    lunes: Optional[int] = Query(None, description="Forzar cantidad de lunes"),
     current_user: Usuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -163,10 +193,32 @@ async def calcular_nomina(
     )
     empleados = result.scalars().all()
     
+    lunes_del_mes = lunes if lunes else get_mondays_in_month(anio, mes)
+    
     tasa_bcv = await obtener_tasa_actual(db)
     valor_bcv = tasa_bcv.tasa_usd if tasa_bcv else Decimal("36.50")
     
-    return [await calcular_nomina_empleado(e, valor_bcv) for e in empleados]
+    return [await calcular_nomina_empleado(e, valor_bcv, lunes_del_mes) for e in empleados]
+
+@router.delete("/empleados/{emp_id}")
+async def eliminar_empleado(
+    emp_id: int,
+    current_user: Usuario = Depends(require_roles("admin", "contador", "gerente_nomina")),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(NominaEmpleado).where(
+            NominaEmpleado.id == emp_id,
+            NominaEmpleado.empresa_id == current_user.empresa_id
+        )
+    )
+    emp = result.scalar_one_or_none()
+    if not emp:
+        raise HTTPException(404, detail="Empleado no encontrado")
+    
+    emp.activo = False # Desactivación lógica
+    await db.commit()
+    return {"message": "Empleado desactivado"}
 
 
 @router.post("/generar-asiento")
