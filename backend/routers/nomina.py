@@ -129,14 +129,10 @@ async def crear_empleado(
     if existing.scalar_one_or_none():
         raise HTTPException(400, detail=f"Ya existe empleado con cédula {data.cedula}")
 
-    try:
-        emp = NominaEmpleado(**data.model_dump(), empresa_id=current_user.empresa_id)
-        db.add(emp)
-        await db.flush()
-        return EmpleadoOut.model_validate(emp)
-    except Exception as e:
-        import traceback
-        raise HTTPException(400, detail=f"DEBUG-POST: {str(e)} | {traceback.format_exc()}")
+    emp = NominaEmpleado(**data.model_dump(), empresa_id=current_user.empresa_id)
+    db.add(emp)
+    await db.flush()
+    return EmpleadoOut.model_validate(emp)
 
 
 @router.get("/empleados", response_model=list[EmpleadoOut])
@@ -167,14 +163,10 @@ async def calcular_nomina(
     )
     empleados = result.scalars().all()
     
-    try:
-        tasa_bcv = await obtener_tasa_actual(db)
-        valor_bcv = tasa_bcv.tasa_usd if tasa_bcv else Decimal("36.50")
-        
-        return [await calcular_nomina_empleado(e, valor_bcv) for e in empleados]
-    except Exception as e:
-        import traceback
-        raise HTTPException(400, detail=f"DEBUG-CALC: {str(e)} | {traceback.format_exc()}")
+    tasa_bcv = await obtener_tasa_actual(db)
+    valor_bcv = tasa_bcv.tasa_usd if tasa_bcv else Decimal("36.50")
+    
+    return [await calcular_nomina_empleado(e, valor_bcv) for e in empleados]
 
 
 @router.post("/generar-asiento")
