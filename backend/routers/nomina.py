@@ -49,11 +49,14 @@ PARAMS = {
 }
 
 async def calcular_nomina_empleado(empleado: NominaEmpleado, tasa_bcv: Decimal) -> NominaCalculadaOut:
-    s = empleado.salario_base
+    s = empleado.salario_base or Decimal("0")
     r = lambda v: v.quantize(Decimal("0.01"), ROUND_HALF_UP)
 
+    # Prevenir que porcentaje_ari sea None si la base de datos no lo llenó
+    ari = empleado.porcentaje_ari if empleado.porcentaje_ari is not None else Decimal("0")
+
     # ISLR: Se aplica el porcentaje exacto de la planilla ARI del empleado
-    islr = r(s * (empleado.porcentaje_ari / Decimal("100")))
+    islr = r(s * (ari / Decimal("100")))
     
     # Topes Legales
     tope_sso = PARAMS["SALARIO_MINIMO_BS"] * Decimal("5")
@@ -62,7 +65,9 @@ async def calcular_nomina_empleado(empleado: NominaEmpleado, tasa_bcv: Decimal) 
     tope_rpe = PARAMS["SALARIO_MINIMO_BS"] * Decimal("10")
     base_rpe = min(s, tope_rpe)
     
-    piso_pensiones = PARAMS["INGRESO_MINIMO_PENSIONES_USD"] * tasa_bcv
+    # tasa_bcv puede venir como flotante o decimal, aseguramos Decimal
+    tasa = Decimal(str(tasa_bcv)) if tasa_bcv else Decimal("36.50")
+    piso_pensiones = PARAMS["INGRESO_MINIMO_PENSIONES_USD"] * tasa
     base_pensiones = max(s, piso_pensiones)
 
     # Deducciones del Empleado
