@@ -280,7 +280,7 @@ class NominaEmpleado(Base):
     salario_base: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     bono_alimentacion: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     anos_servicio: Mapped[int] = mapped_column(Integer, default=0)
-    porcentaje_ari: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=0)
+    porcentaje_ari: Mapped[Decimal] = mapped_column(Numeric(7, 4), default=0)
     activo: Mapped[bool] = mapped_column(Boolean, default=True)
     fecha_inicio: Mapped[Optional[date]] = mapped_column(Date)
     creado_en: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
