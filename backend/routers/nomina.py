@@ -1,7 +1,8 @@
 """
 Router: Nómina
-- ISLR progresivo 6 tramos (tabla Venezuela 2025)
-- SSO, FAOV, INCES, Protección Pensiones
+- ISLR progresivo: Calculado según % ARI del empleado
+- SSO y Paro Forzoso: Con topes de 5 y 10 salarios mínimos
+- FAOV, INCES, Protección Pensiones
 - Generación automática de asiento contable
 """
 
@@ -15,60 +16,73 @@ from models import NominaEmpleado, Asiento, LineaAsiento, CatalogoCuenta, Usuari
 from schemas import EmpleadoCreate, EmpleadoOut, NominaCalculadaOut
 from routers.auth import get_current_user, require_roles
 from routers.asientos import get_proximo_numero
+from routers.tasas import obtener_tasa_actual
 
 router = APIRouter()
 
 # ─── Parámetros tributarios vigentes ─────────────────────────────────────────
 
 PARAMS = {
+    # Sueldo mínimo y equivalente
+    "SALARIO_MINIMO_BS": Decimal("130.00"),
+    "INGRESO_MINIMO_PENSIONES_USD": Decimal("130.00"),
+    
+    # Seguro Social (Tope: 5 salarios mínimos)
     "SSO_EMP":   Decimal("0.04"),
-    "SSO_PAT":   Decimal("0.09"),
+    "SSO_PAT":   Decimal("0.10"),  # Riesgo Medio
+    
+    # Régimen Prestacional de Empleo (Paro Forzoso) (Tope: 10 salarios mínimos)
+    "RPE_EMP":   Decimal("0.005"),
+    "RPE_PAT":   Decimal("0.02"),
+    
+    # FAOV (Sin tope)
     "FAOV_EMP":  Decimal("0.01"),
     "FAOV_PAT":  Decimal("0.02"),
-    "INCES_EMP": Decimal("0.005"),
+    
+    # INCES (Trabajador 0.5% solo en Utilidades, Empresa 2% en nómina regular)
+    "INCES_EMP": Decimal("0.00"),
     "INCES_PAT": Decimal("0.02"),
-    "PEN_EMP":   Decimal("0.09"),
+    
+    # Ley de Protección de Pensiones (100% Empresa, piso mínimo de 130 USD)
+    "PEN_EMP":   Decimal("0.00"),
     "PEN_PAT":   Decimal("0.09"),
 }
 
-# Tabla ISLR progresivo 2025 (6 tramos)
-ISLR_TRAMOS = [
-    (Decimal("0"),     Decimal("3000"),  Decimal("0.00"),  Decimal("0")),
-    (Decimal("3000"),  Decimal("5000"),  Decimal("0.06"),  Decimal("0")),
-    (Decimal("5000"),  Decimal("10000"), Decimal("0.09"),  Decimal("120")),
-    (Decimal("10000"), Decimal("15000"), Decimal("0.12"),  Decimal("570")),
-    (Decimal("15000"), Decimal("20000"), Decimal("0.16"),  Decimal("1170")),
-    (Decimal("20000"), None,             Decimal("0.34"),  Decimal("1970")),
-]
-
-
-def calcular_islr(salario: Decimal) -> Decimal:
-    """Cálculo ISLR progresivo mensual según tabla 2025."""
-    for desde, hasta, tasa, acumulado in ISLR_TRAMOS:
-        if hasta is None or salario <= hasta:
-            if salario <= desde:
-                return Decimal("0")
-            return (acumulado + (salario - desde) * tasa).quantize(Decimal("0.01"), ROUND_HALF_UP)
-    return Decimal("0")
-
-
-def calcular_nomina_empleado(empleado: NominaEmpleado) -> NominaCalculadaOut:
+async def calcular_nomina_empleado(empleado: NominaEmpleado, tasa_bcv: Decimal) -> NominaCalculadaOut:
     s = empleado.salario_base
     r = lambda v: v.quantize(Decimal("0.01"), ROUND_HALF_UP)
 
-    islr = calcular_islr(s)
-    sso_e = r(s * PARAMS["SSO_EMP"])
+    # ISLR: Se aplica el porcentaje exacto de la planilla ARI del empleado
+    islr = r(s * (empleado.porcentaje_ari / Decimal("100")))
+    
+    # Topes Legales
+    tope_sso = PARAMS["SALARIO_MINIMO_BS"] * Decimal("5")
+    base_sso = min(s, tope_sso)
+    
+    tope_rpe = PARAMS["SALARIO_MINIMO_BS"] * Decimal("10")
+    base_rpe = min(s, tope_rpe)
+    
+    piso_pensiones = PARAMS["INGRESO_MINIMO_PENSIONES_USD"] * tasa_bcv
+    base_pensiones = max(s, piso_pensiones)
+
+    # Deducciones del Empleado
+    sso_e = r(base_sso * PARAMS["SSO_EMP"])
+    rpe_e = r(base_rpe * PARAMS["RPE_EMP"])
     faov_e = r(s * PARAMS["FAOV_EMP"])
     inces_e = r(s * PARAMS["INCES_EMP"])
     pen_e = r(s * PARAMS["PEN_EMP"])
-    total_ded = islr + sso_e + faov_e + inces_e + pen_e
+    
+    total_ded = islr + sso_e + rpe_e + faov_e + inces_e + pen_e
     neto = r(s - total_ded)
 
-    sso_p = r(s * PARAMS["SSO_PAT"])
+    # Aportes Patronales
+    sso_p = r(base_sso * PARAMS["SSO_PAT"])
+    rpe_p = r(base_rpe * PARAMS["RPE_PAT"])
     faov_p = r(s * PARAMS["FAOV_PAT"])
     inces_p = r(s * PARAMS["INCES_PAT"])
-    pen_p = r(s * PARAMS["PEN_PAT"])
-    costo = r(s + sso_p + faov_p + inces_p + pen_p)
+    pen_p = r(base_pensiones * PARAMS["PEN_PAT"])
+    
+    costo = r(s + sso_p + rpe_p + faov_p + inces_p + pen_p)
 
     return NominaCalculadaOut(
         empleado_id=empleado.id,
@@ -80,12 +94,14 @@ def calcular_nomina_empleado(empleado: NominaEmpleado) -> NominaCalculadaOut:
         sso_empleado=sso_e,
         faov_empleado=faov_e,
         inces_empleado=inces_e,
+        rpe_empleado=rpe_e,
         proteccion_pensiones_emp=pen_e,
         total_deducciones=total_ded,
         neto_a_pagar=neto,
         sso_patrono=sso_p,
         faov_patrono=faov_p,
         inces_patrono=inces_p,
+        rpe_patrono=rpe_p,
         proteccion_pensiones_pat=pen_p,
         costo_total_empresa=costo,
     )
@@ -141,7 +157,11 @@ async def calcular_nomina(
         )
     )
     empleados = result.scalars().all()
-    return [calcular_nomina_empleado(e) for e in empleados]
+    
+    tasa_bcv = await obtener_tasa_actual(db)
+    valor_bcv = tasa_bcv.valor if tasa_bcv else Decimal("36.50")
+    
+    return [await calcular_nomina_empleado(e, valor_bcv) for e in empleados]
 
 
 @router.post("/generar-asiento")
@@ -157,7 +177,8 @@ async def generar_asiento_nomina(
            6.1.04 INCES Patronal
            6.1.05 Protección Pensiones Patronal
     HABER: 2.1.20 Nómina por Pagar
-           2.1.11 SSO/FAOV/INCES por Pagar
+           2.1.11.01 Retenciones y Aportes IVSS
+           2.1.11.02 Retenciones y Aportes BANAVIH
            2.1.12 Protección Pensiones por Pagar
     """
     result = await db.execute(
@@ -170,28 +191,34 @@ async def generar_asiento_nomina(
     if not empleados:
         raise HTTPException(400, detail="No hay empleados activos")
 
+    tasa_bcv = await obtener_tasa_actual(db)
+    valor_bcv = tasa_bcv.valor if tasa_bcv else Decimal("36.50")
+
     # Calcular totales
     r = lambda v: v.quantize(Decimal("0.01"), ROUND_HALF_UP)
     tot_sal = ZERO = Decimal("0")
-    tot_neto = tot_sso_p = tot_faov_p = tot_inces_p = tot_pen_p = ZERO
-    tot_sso_e = tot_faov_e = tot_inces_e = tot_pen_e = ZERO
+    tot_neto = tot_sso_p = tot_faov_p = tot_inces_p = tot_pen_p = tot_rpe_p = ZERO
+    tot_sso_e = tot_faov_e = tot_inces_e = tot_pen_e = tot_rpe_e = ZERO
 
     for emp in empleados:
-        c = calcular_nomina_empleado(emp)
+        c = await calcular_nomina_empleado(emp, valor_bcv)
         tot_sal += emp.salario_base
         tot_neto += c.neto_a_pagar
         tot_sso_p += c.sso_patrono
         tot_faov_p += c.faov_patrono
         tot_inces_p += c.inces_patrono
         tot_pen_p += c.proteccion_pensiones_pat
+        tot_rpe_p += c.rpe_patrono
+        
         tot_sso_e += c.sso_empleado
         tot_faov_e += c.faov_empleado
         tot_inces_e += c.inces_empleado
         tot_pen_e += c.proteccion_pensiones_emp
+        tot_rpe_e += c.rpe_empleado
 
     # Resolver cuentas
     codigos_needed = ["6.1.01", "6.1.02", "6.1.03", "6.1.04", "6.1.05",
-                      "2.1.20", "2.1.11", "2.1.12"]
+                      "2.1.20", "2.1.11.01", "2.1.11.02", "2.1.12"]
     res_cuentas = await db.execute(
         select(CatalogoCuenta).where(
             CatalogoCuenta.empresa_id == current_user.empresa_id,
@@ -202,7 +229,7 @@ async def generar_asiento_nomina(
 
     missing = [c for c in codigos_needed if c not in cuentas]
     if missing:
-        raise HTTPException(400, detail=f"Cuentas faltantes en catálogo: {missing}")
+        raise HTTPException(400, detail=f"Cuentas faltantes en catálogo: {missing}. Actualiza el catálogo o verifica los subgrupos.")
 
     from datetime import date
     numero = await get_proximo_numero(current_user.empresa_id, db)
@@ -214,8 +241,8 @@ async def generar_asiento_nomina(
         mes=date.today().month,
         descripcion=f"Nómina mensual — {len(empleados)} empleados",
         referencia=f"NOM-{date.today().strftime('%Y%m')}",
-        total_debe=r(tot_sal + tot_sso_p + tot_faov_p + tot_inces_p + tot_pen_p),
-        total_haber=r(tot_neto + (tot_sso_e + tot_sso_p) + (tot_faov_e + tot_faov_p) + (tot_inces_e + tot_inces_p) + (tot_pen_e + tot_pen_p)),
+        total_debe=r(tot_sal + tot_sso_p + tot_faov_p + tot_inces_p + tot_pen_p + tot_rpe_p),
+        total_haber=r(tot_neto + (tot_sso_e + tot_sso_p + tot_rpe_e + tot_rpe_p) + (tot_faov_e + tot_faov_p) + (tot_inces_e + tot_inces_p) + (tot_pen_e + tot_pen_p)),
         cuadra=True,
         creado_por=current_user.id,
     )
@@ -224,12 +251,13 @@ async def generar_asiento_nomina(
 
     lineas_data = [
         ("6.1.01", tot_sal, Decimal("0")),
-        ("6.1.02", tot_sso_p, Decimal("0")),
+        ("6.1.02", tot_sso_p + tot_rpe_p, Decimal("0")), # SSO y Paro se asientan juntos en gastos usualmente, pero como la cuenta 6.1.02 se llama SSO, podemos sumar.
         ("6.1.03", tot_faov_p, Decimal("0")),
         ("6.1.04", tot_inces_p, Decimal("0")),
         ("6.1.05", tot_pen_p, Decimal("0")),
         ("2.1.20", Decimal("0"), tot_neto),
-        ("2.1.11", Decimal("0"), r(tot_sso_e + tot_sso_p + tot_faov_e + tot_faov_p + tot_inces_e + tot_inces_p)),
+        ("2.1.11.01", Decimal("0"), r(tot_sso_e + tot_sso_p + tot_rpe_e + tot_rpe_p)), # IVSS = SSO + RPE
+        ("2.1.11.02", Decimal("0"), r(tot_faov_e + tot_faov_p)), # BANAVIH = FAOV
         ("2.1.12", Decimal("0"), r(tot_pen_e + tot_pen_p)),
     ]
 
@@ -242,13 +270,3 @@ async def generar_asiento_nomina(
         ))
 
     return {"numero_asiento": numero, "mensaje": "Asiento de nómina generado correctamente"}
-
-
-@router.get("/islr-tabla")
-async def tabla_islr():
-    """Devuelve la tabla ISLR progresiva vigente."""
-    return [
-        {"tramo": i + 1, "desde": float(d), "hasta": float(h) if h else None,
-         "tasa_pct": float(t * 100), "acumulado": float(a)}
-        for i, (d, h, t, a) in enumerate(ISLR_TRAMOS)
-    ]
