@@ -3,19 +3,18 @@ Boeuf Contable SaaS — Backend API
 Python 3.11+ | FastAPI | PostgreSQL | SQLAlchemy 2.0
 
 FLUJO DE DEPLOY CORRECTO (Render + Neon):
-  1. En Neon SQL Editor:
+  1. Verificar que DATABASE_URL en Render apunte a la misma BD que ves en Neon.
+  2. En la BD correcta (Neon SQL Editor):
        DROP SCHEMA public CASCADE;
        CREATE SCHEMA public;
-  2. Push a GitHub → Render detecta el cambio y redeploy automático.
-  3. Al arrancar, este lifespan:
-       a) Corre migrate() — añade columnas/tablas faltantes
-       b) Corre create_all — crea tablas nuevas (nomina_programacion, etc.)
-       c) Siembra catálogo con UPSERT (no duplica cuentas en redeployS)
-       d) Inicia scheduler BCV
+  3. Push a GitHub → "Clear build cache & deploy" en Render.
 
-  Si los empleados siguen apareciendo tras el DROP:
-  → Render tiene el proceso cacheado. Haz "Clear build cache & deploy" en
-    el dashboard de Render, NO solo "Manual deploy".
+USUARIOS SEMILLA:
+  - admin@boeuf.com        / boeuf123     → Empresa Demo C.A.        (admin)
+  - usuario@elcuadrefrio.com / cuadre123  → El Cuadre Frío C.A.      (admin)
+  - ricky@rickyricon.com   / ricky123     → Rickyricon C.A.           (admin)
+  - amigo@rickyricontest.com / amigo123   → Ricky Ricón Test C.A.     (admin)
+    (empresa aislada para que el amigo pruebe con su propio profesor)
 """
 
 from fastapi import FastAPI
@@ -34,106 +33,112 @@ from tasks.scheduler import start_scheduler
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ─── Definición de empresas/usuarios semilla ─────────────────────────────────
+# Cada entrada es completamente aislada (empresa_id distinto = datos separados).
+# Para agregar más: copiar el bloque y cambiar email, rif, nombre, password.
+
+SEED_ACCOUNTS = [
+    {
+        "empresa_nombre": "Empresa Demo C.A.",
+        "rif":            "J-00000000-0",
+        "admin_nombre":   "Administrador",
+        "admin_email":    "admin@boeuf.com",
+        "admin_password": "boeuf123",
+    },
+    {
+        "empresa_nombre": "El Cuadre Frío C.A.",
+        "rif":            "J-11111111-1",
+        "admin_nombre":   "Usuario",
+        "admin_email":    "usuario@elcuadrefrio.com",
+        "admin_password": "cuadre123",
+    },
+    {
+        "empresa_nombre": "Rickyricon C.A.",
+        "rif":            "J-98765432-1",
+        "admin_nombre":   "Ricky (Admin)",
+        "admin_email":    "ricky@rickyricon.com",
+        "admin_password": "ricky123",
+    },
+    {
+        # Empresa aislada para el amigo — ve solo su propio dashboard y datos.
+        "empresa_nombre": "Ricky Ricón Test C.A.",
+        "rif":            "J-55555555-5",
+        "admin_nombre":   "Ricky Ricón",
+        "admin_email":    "amigo@rickyricontest.com",
+        "admin_password": "amigo123",
+    },
+]
+
+
+async def _sembrar_cuenta(seed: dict, db) -> None:
+    """Crea empresa + usuario admin + catálogo si el usuario no existe aún."""
+    from sqlalchemy import select
+    from models import Usuario, Empresa, TipoPersonaEnum, RolEnum
+    from routers.auth import hash_password
+    from routers.catalogo import sembrar_catalogo_default
+
+    res = await db.execute(
+        select(Usuario).where(Usuario.email == seed["admin_email"])
+    )
+    existing_user = res.scalar_one_or_none()
+
+    if not existing_user:
+        logger.info(f"Creando cuenta: {seed['admin_email']}...")
+        emp = Empresa(
+            nombre_razon_social=seed["empresa_nombre"],
+            rif=seed["rif"],
+            tipo_persona=TipoPersonaEnum.juridica,
+        )
+        db.add(emp)
+        await db.flush()
+
+        db.add(Usuario(
+            nombre=seed["admin_nombre"],
+            email=seed["admin_email"],
+            contrasena_hash=hash_password(seed["admin_password"]),
+            rol=RolEnum.admin,
+            empresa_id=emp.id,
+        ))
+        await sembrar_catalogo_default(emp.id, db)
+        await db.commit()
+        logger.info(f">>> Creado: {seed['admin_email']} / {seed['admin_password']}")
+    else:
+        # Ya existe: actualizar catálogo con cuentas nuevas (UPSERT, no duplica)
+        res_emp = await db.execute(
+            select(Empresa).where(Empresa.rif == seed["rif"])
+        )
+        emp = res_emp.scalar_one_or_none()
+        if emp:
+            await sembrar_catalogo_default(emp.id, db)
+            await db.commit()
+            logger.info(f"Catálogo actualizado para: {seed['empresa_nombre']}")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
-    # ── Paso 1: migraciones incrementales (columnas/tablas nuevas) ────────────
+    # ── 1. Migraciones incrementales (columnas/tablas nuevas sin borrar datos) ─
     try:
         from update_db import migrate
         await migrate()
     except Exception as e:
         logger.warning(f"Error en migración incremental: {e}")
 
-    # ── Paso 2: crear tablas que no existen (incluye nomina_programacion) ─────
+    # ── 2. Crear tablas faltantes (create_all nunca borra ni modifica) ─────────
     logger.info("Verificando/creando tablas...")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Tablas OK.")
 
-    # ── Paso 3: sembrar datos iniciales ───────────────────────────────────────
-    # sembrar_catalogo_default ahora usa UPSERT:
-    #   - Primera vez: crea todas las cuentas
-    #   - Redeploysp posteriores: actualiza nombres/metadatos, no duplica
+    # ── 3. Sembrar todas las cuentas (una por una, aisladas por empresa_id) ────
     try:
-        from sqlalchemy import select
-        from models import Usuario, Empresa, TipoPersonaEnum, RolEnum
-        from routers.auth import hash_password
-        from routers.catalogo import sembrar_catalogo_default
-
         async with AsyncSessionLocal() as db:
-
-            # ── El Cuadre Frío C.A. ──────────────────────────────────────────
-            res = await db.execute(
-                select(Usuario).where(Usuario.email == "usuario@elcuadrefrio.com")
-            )
-            if not res.scalar_one_or_none():
-                logger.info("Creando El Cuadre Frío C.A. (primera vez)...")
-                emp = Empresa(
-                    nombre_razon_social="El Cuadre Frío C.A.",
-                    rif="J-11111111-1",
-                    tipo_persona=TipoPersonaEnum.juridica,
-                )
-                db.add(emp)
-                await db.flush()
-                db.add(Usuario(
-                    nombre="Usuario",
-                    email="usuario@elcuadrefrio.com",
-                    contrasena_hash=hash_password("cuadre123"),
-                    rol=RolEnum.admin,
-                    empresa_id=emp.id,
-                ))
-                await sembrar_catalogo_default(emp.id, db)
-                await db.commit()
-                logger.info(">>> usuario@elcuadrefrio.com / cuadre123")
-            else:
-                # Empresa ya existe → actualizar catálogo con cuentas nuevas
-                res_emp = await db.execute(
-                    select(Empresa).where(Empresa.rif == "J-11111111-1")
-                )
-                emp = res_emp.scalar_one_or_none()
-                if emp:
-                    await sembrar_catalogo_default(emp.id, db)
-                    await db.commit()
-                    logger.info("Catálogo El Cuadre Frío actualizado (upsert).")
-
-            # ── Rickyricon C.A. ──────────────────────────────────────────────
-            res2 = await db.execute(
-                select(Usuario).where(Usuario.email == "ricky@rickyricon.com")
-            )
-            if not res2.scalar_one_or_none():
-                logger.info("Creando Rickyricon C.A. (primera vez)...")
-                emp2 = Empresa(
-                    nombre_razon_social="Rickyricon C.A.",
-                    rif="J-98765432-1",
-                    tipo_persona=TipoPersonaEnum.juridica,
-                )
-                db.add(emp2)
-                await db.flush()
-                db.add(Usuario(
-                    nombre="Ricky (Admin)",
-                    email="ricky@rickyricon.com",
-                    contrasena_hash=hash_password("ricky123"),
-                    rol=RolEnum.admin,
-                    empresa_id=emp2.id,
-                ))
-                await sembrar_catalogo_default(emp2.id, db)
-                await db.commit()
-                logger.info(">>> ricky@rickyricon.com / ricky123")
-            else:
-                res_emp2 = await db.execute(
-                    select(Empresa).where(Empresa.rif == "J-98765432-1")
-                )
-                emp2 = res_emp2.scalar_one_or_none()
-                if emp2:
-                    await sembrar_catalogo_default(emp2.id, db)
-                    await db.commit()
-                    logger.info("Catálogo Rickyricon actualizado (upsert).")
-
+            for seed in SEED_ACCOUNTS:
+                await _sembrar_cuenta(seed, db)
     except Exception as e:
         logger.error(f"Error en siembra inicial: {e}")
 
-    # ── Paso 4: scheduler de tasa BCV ─────────────────────────────────────────
+    # ── 4. Scheduler tasa BCV ──────────────────────────────────────────────────
     start_scheduler()
     yield
 
@@ -176,25 +181,42 @@ async def root():
 
 @app.get("/debug", tags=["Health"])
 async def debug_db():
+    """
+    Muestra tablas, usuarios y empresas actuales.
+    Útil para verificar que el deploy llegó a la BD correcta.
+    También muestra la URL de conexión (sin password) para comparar con Neon.
+    """
     try:
         from sqlalchemy import select, text
         from models import Usuario, Empresa
+        import os
 
         async with AsyncSessionLocal() as db:
             users    = (await db.execute(select(Usuario.email, Usuario.nombre))).fetchall()
-            empresas = (await db.execute(select(Empresa.nombre_razon_social))).fetchall()
+            empresas = (await db.execute(select(Empresa.nombre_razon_social, Empresa.rif))).fetchall()
             tables   = [
                 t[0] for t in (await db.execute(
                     text("SELECT table_name FROM information_schema.tables "
                          "WHERE table_schema='public' ORDER BY table_name")
                 )).fetchall()
             ]
+
+            # Mostrar host de BD sin credenciales (para comparar con Neon)
+            db_url = os.getenv("DATABASE_URL", "no definida")
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(db_url)
+                db_host = f"{parsed.scheme}://***@{parsed.hostname}{parsed.path}"
+            except Exception:
+                db_host = "no parseable"
+
             return {
                 "status":       "ok",
+                "db_host":      db_host,
                 "tables_count": len(tables),
                 "tables":       tables,
                 "users":        [{"email": u[0], "nombre": u[1]} for u in users],
-                "empresas":     [e[0] for e in empresas],
+                "empresas":     [{"nombre": e[0], "rif": e[1]} for e in empresas],
             }
     except Exception as e:
         return {"status": "error", "message": str(e)}
