@@ -159,7 +159,7 @@ async def calcular_nomina(
     empleados = result.scalars().all()
     
     tasa_bcv = await obtener_tasa_actual(db)
-    valor_bcv = tasa_bcv.valor if tasa_bcv else Decimal("36.50")
+    valor_bcv = tasa_bcv.tasa_usd if tasa_bcv else Decimal("36.50")
     
     return [await calcular_nomina_empleado(e, valor_bcv) for e in empleados]
 
@@ -192,7 +192,7 @@ async def generar_asiento_nomina(
         raise HTTPException(400, detail="No hay empleados activos")
 
     tasa_bcv = await obtener_tasa_actual(db)
-    valor_bcv = tasa_bcv.valor if tasa_bcv else Decimal("36.50")
+    valor_bcv = tasa_bcv.tasa_usd if tasa_bcv else Decimal("36.50")
 
     # Calcular totales
     r = lambda v: v.quantize(Decimal("0.01"), ROUND_HALF_UP)
