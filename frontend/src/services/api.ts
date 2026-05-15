@@ -111,7 +111,8 @@ export const seniatApi = {
 export const nominaApi = {
   listarEmpleados: () => api.get('/nomina/empleados'),
   crearEmpleado: (data: unknown) => api.post('/nomina/empleados', data),
-  calcular: () => api.get('/nomina/calcular'),
+  eliminarEmpleado: (id: number) => api.delete(`/nomina/empleados/${id}`),
+  calcular: (params?: { lunes?: number }) => api.get('/nomina/calcular', { params }),
   generarAsiento: () => api.post('/nomina/generar-asiento'),
   tablaIslr: () => api.get('/nomina/islr-tabla'),
 }
