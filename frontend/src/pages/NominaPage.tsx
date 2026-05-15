@@ -142,14 +142,11 @@ export default function NominaPage() {
             <Field label="Porcentaje ARI (%)" error={errors.porcentaje_ari?.message}>
               <div className="relative">
                 <input 
-                  type="text" 
+                  type="number" 
+                  step="any"
                   className="input pr-8" 
                   placeholder="2.79" 
-                  {...register('porcentaje_ari', { 
-                    required: false,
-                    pattern: { value: /^[0-9]+([.,][0-9]+)?$/, message: 'Formato inválido' },
-                    setValueAs: (v) => v ? parseFloat(String(v).replace(',', '.')) : 0
-                  })} 
+                  {...register('porcentaje_ari', { valueAsNumber: true, min: 0, max: 100 })} 
                 />
                 <span className="absolute right-3 top-2 text-surface-400">%</span>
               </div>
