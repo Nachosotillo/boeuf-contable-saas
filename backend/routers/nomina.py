@@ -148,15 +148,27 @@ async def crear_empleado(
     current_user: Usuario = Depends(require_roles("admin", "contador", "gerente_nomina")),
     db: AsyncSession = Depends(get_db)
 ):
-    existing = await db.execute(
+    # Buscar si ya existe (activo o inactivo)
+    result = await db.execute(
         select(NominaEmpleado).where(
             NominaEmpleado.empresa_id == current_user.empresa_id,
             NominaEmpleado.cedula == data.cedula,
         )
     )
-    if existing.scalar_one_or_none():
-        raise HTTPException(400, detail=f"Ya existe empleado con cédula {data.cedula}")
+    existing = result.scalar_one_or_none()
+    
+    if existing:
+        if existing.activo:
+            raise HTTPException(400, detail=f"Ya existe un empleado activo con cédula {data.cedula}")
+        else:
+            # Si existía pero estaba inactivo, lo reactivamos y actualizamos sus datos
+            for key, value in data.model_dump().items():
+                setattr(existing, key, value)
+            existing.activo = True
+            await db.flush()
+            return EmpleadoOut.model_validate(existing)
 
+    # Si no existe, crear uno nuevo
     emp = NominaEmpleado(**data.model_dump(), empresa_id=current_user.empresa_id)
     db.add(emp)
     await db.flush()
