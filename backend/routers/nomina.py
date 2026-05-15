@@ -316,20 +316,42 @@ async def generar_asiento_nomina(
         tot_pen_e   += c.proteccion_pensiones_emp
         tot_rpe_e   += c.rpe_empleado
 
-    # Resolver cuentas
-    codigos_needed = ["6.1.01", "6.1.02", "6.1.03", "6.1.04", "6.1.05",
-                      "2.1.20", "2.1.11.01", "2.1.11.02", "2.1.12"]
+    # Resolver cuentas (y crear si faltan)
+    codigos_needed = {
+        "6.1.01": ("Sueldos y Salarios — Ventas", "Deudora", "Estado de Resultado"),
+        "6.1.02": ("Aportes Sociales Patronales", "Deudora", "Estado de Resultado"),
+        "6.1.03": ("FAOV Patronal", "Deudora", "Estado de Resultado"),
+        "6.1.04": ("INCES Patronal", "Deudora", "Estado de Resultado"),
+        "6.1.05": ("Protección Pensiones Patronal", "Deudora", "Estado de Resultado"),
+        "2.1.20": ("Nómina por Pagar", "Acreedora", "Situación Financiera"),
+        "2.1.11.01": ("Retenciones y Aportes IVSS", "Acreedora", "Situación Financiera"),
+        "2.1.11.02": ("Retenciones y Aportes BANAVIH", "Acreedora", "Situación Financiera"),
+        "2.1.12": ("Protección Pensiones por Pagar", "Acreedora", "Situación Financiera"),
+    }
+    
     res_cuentas = await db.execute(
         select(CatalogoCuenta).where(
             CatalogoCuenta.empresa_id == current_user.empresa_id,
-            CatalogoCuenta.codigo.in_(codigos_needed),
+            CatalogoCuenta.codigo.in_(list(codigos_needed.keys())),
         )
     )
     cuentas = {c.codigo: c for c in res_cuentas.scalars().all()}
 
-    missing = [c for c in codigos_needed if c not in cuentas]
-    if missing:
-        raise HTTPException(400, detail=f"Cuentas faltantes en catálogo: {missing}. Actualiza el catálogo o verifica los subgrupos.")
+    from models import TipoCuentaEnum, NaturalezaEnum, EstadoFinancieroEnum
+    for cod, (nom, nat, ef) in codigos_needed.items():
+        if cod not in cuentas:
+            new_c = CatalogoCuenta(
+                empresa_id=current_user.empresa_id,
+                codigo=cod,
+                nombre=nom,
+                tipo=TipoCuentaEnum.cuenta,
+                naturaleza=NaturalezaEnum.deudora if nat == "Deudora" else NaturalezaEnum.acreedora,
+                estado_financiero=EstadoFinancieroEnum.situacion if ef == "Situación Financiera" else EstadoFinancieroEnum.resultado,
+                es_generada_auto=True
+            )
+            db.add(new_c)
+            await db.flush()
+            cuentas[cod] = new_c
 
     numero = await get_proximo_numero(current_user.empresa_id, db)
 
