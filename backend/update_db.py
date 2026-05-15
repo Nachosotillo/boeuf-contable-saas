@@ -37,7 +37,7 @@ async def migrate():
 
         # 3. Nomina
         try:
-            await conn.execute(text("ALTER TABLE nomina_empleado ADD COLUMN porcentaje_ari NUMERIC(5,4) DEFAULT 0;"))
+            await conn.execute(text("ALTER TABLE nomina_empleado ADD COLUMN porcentaje_ari NUMERIC(7,4) DEFAULT 0;"))
             logger.info("Columna 'porcentaje_ari' añadida a nomina_empleado.")
         except Exception as e:
             logger.warning(f"Aviso porcentaje_ari: {e}")
