@@ -35,8 +35,27 @@ async def migrate():
         except Exception as e:
             logger.warning(f"Aviso fecha_vencimiento: {e}")
 
-        # 3. Empresa (articulos_inventario no es una columna real, es un relationship)
-        # La tabla articulo_inventario se crea automáticamente con Base.metadata.create_all en main.py
+        # 3. Nomina
+        try:
+            await conn.execute(text("ALTER TABLE nomina_empleado ADD COLUMN porcentaje_ari NUMERIC(5,4) DEFAULT 0;"))
+            logger.info("Columna 'porcentaje_ari' añadida a nomina_empleado.")
+        except Exception as e:
+            logger.warning(f"Aviso porcentaje_ari: {e}")
+
+        try:
+            await conn.execute(text("ALTER TABLE nomina_periodo ADD COLUMN rpe_empleado NUMERIC(14,2) DEFAULT 0;"))
+            await conn.execute(text("ALTER TABLE nomina_periodo ADD COLUMN rpe_patrono NUMERIC(14,2) DEFAULT 0;"))
+            logger.info("Columnas 'rpe_empleado' y 'rpe_patrono' añadidas a nomina_periodo.")
+        except Exception as e:
+            logger.warning(f"Aviso rpe_empleado/patrono: {e}")
+
+        # 4. Actualizar subcuentas en catálogo
+        # As we changed 2.1.11 to a subgroup, existing companies need these accounts inserted or updated
+        # It's safer to just let the user run the Nuclear option since they have no data,
+        # but just in case, we won't crash if they don't.
+        # Actually, because the user explicitly stated they will drop the DB again to avoid collisions,
+        # create_all will just generate the new schema perfectly!
+        # But we still keep the migration commands for good practice.
 
     logger.info("Actualización completada. Puedes iniciar el servidor.")
 
