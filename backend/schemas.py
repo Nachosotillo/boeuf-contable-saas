@@ -203,9 +203,27 @@ class EmpleadoCreate(BaseModel):
     cargo: Optional[str] = None
     tipo: TipoNominaEnum = TipoNominaEnum.moi
     salario_base: Decimal = Field(..., gt=0, decimal_places=2)
-    bono_alimentacion: Decimal = Field(default=0, ge=0, decimal_places=2)
+    bono_alimentacion: Decimal = Field(default=Decimal("0.00"), ge=0, decimal_places=2)
     anos_servicio: int = Field(default=0, ge=0)
+    # FIX: Se eliminó decimal_places=4 como validador estricto y se reemplaza
+    # por un @field_validator que redondea explícitamente a 4 decimales.
+    # Esto evita que Pydantic rechace o corrompa valores como "2.79" (2 decimales).
+    porcentaje_ari: Decimal = Field(default=Decimal("0.0000"), ge=0, lt=100)
     fecha_inicio: Optional[date] = None
+
+    @field_validator("porcentaje_ari", mode="before")
+    @classmethod
+    def normalizar_ari(cls, v):
+        """
+        Convierte el valor a Decimal con 4 decimales de precisión.
+        Acepta int, float, str y Decimal. Ejemplo: "2.79" → Decimal("2.7900").
+        """
+        if v is None:
+            return Decimal("0.0000")
+        try:
+            return Decimal(str(v)).quantize(Decimal("0.0001"))
+        except Exception:
+            raise ValueError(f"porcentaje_ari debe ser un número válido, se recibió: {v!r}")
 
 
 class EmpleadoOut(EmpleadoCreate):
@@ -225,12 +243,14 @@ class NominaCalculadaOut(BaseModel):
     sso_empleado: Decimal
     faov_empleado: Decimal
     inces_empleado: Decimal
+    rpe_empleado: Decimal
     proteccion_pensiones_emp: Decimal
     total_deducciones: Decimal
     neto_a_pagar: Decimal
     sso_patrono: Decimal
     faov_patrono: Decimal
     inces_patrono: Decimal
+    rpe_patrono: Decimal
     proteccion_pensiones_pat: Decimal
     costo_total_empresa: Decimal
 

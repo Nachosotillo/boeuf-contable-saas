@@ -280,7 +280,9 @@ class NominaEmpleado(Base):
     salario_base: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     bono_alimentacion: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     anos_servicio: Mapped[int] = mapped_column(Integer, default=0)
-    porcentaje_ari: Mapped[Decimal] = mapped_column(Numeric(7, 4), default=0)
+    # FIX: Numeric(6, 4) permite hasta 99.9999% con 4 decimales de precisión.
+    # El campo es NOT NULL con default 0 para evitar lecturas None inesperadas.
+    porcentaje_ari: Mapped[Decimal] = mapped_column(Numeric(6, 4), nullable=False, default=Decimal("0.0000"))
     activo: Mapped[bool] = mapped_column(Boolean, default=True)
     fecha_inicio: Mapped[Optional[date]] = mapped_column(Date)
     creado_en: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -298,31 +300,32 @@ class NominaPeriodo(Base):
     __tablename__ = "nomina_periodo"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    empresa_id: Mapped[int] = mapped_column(ForeignKey("empresa.id", ondelete="CASCADE"), nullable=False)
-    empleado_id: Mapped[int] = mapped_column(ForeignKey("nomina_empleado.id", ondelete="CASCADE"), nullable=False)
+    empresa_id: Mapped[int] = mapped_column(ForeignKey("empresa.id", ondelete="CASCADE"), nullable=False, index=True)
+    empleado_id: Mapped[int] = mapped_column(ForeignKey("nomina_empleado.id", ondelete="CASCADE"), nullable=False, index=True)
     mes: Mapped[int] = mapped_column(Integer, nullable=False)
     anio: Mapped[int] = mapped_column(Integer, nullable=False)
-    salario_base: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    salario_base: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     islr_deducido: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     sso_empleado: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
+    rpe_empleado: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     faov_empleado: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     inces_empleado: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
-    rpe_empleado: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     proteccion_pensiones_emp: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     total_deducciones: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     neto_a_pagar: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     sso_patrono: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
+    rpe_patrono: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     faov_patrono: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     inces_patrono: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
-    rpe_patrono: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     proteccion_pensiones_pat: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     costo_total_empresa: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     creado_en: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    empresa: Mapped["Empresa"] = relationship()
     empleado: Mapped["NominaEmpleado"] = relationship(back_populates="periodos")
 
     __table_args__ = (
-        UniqueConstraint("empresa_id", "empleado_id", "mes", "anio", name="uq_nomina_periodo"),
+        UniqueConstraint("empresa_id", "empleado_id", "mes", "anio", name="uq_periodo_empleado_mes"),
     )
 
 
@@ -338,7 +341,8 @@ class ActivoFijo(Base):
     vida_util_anos: Mapped[int] = mapped_column(Integer, nullable=False)
     meses_depreciados: Mapped[int] = mapped_column(Integer, default=0)
     depreciacion_acumulada: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
-    valor_neto: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    valor_neto: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
+    depreciacion_mensual: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2))
     cuenta_activo_codigo: Mapped[Optional[str]] = mapped_column(String(20))
     cuenta_depreciacion_codigo: Mapped[Optional[str]] = mapped_column(String(20))
     activo: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -360,8 +364,8 @@ class ArticuloInventario(Base):
     descripcion: Mapped[str] = mapped_column(String(255), nullable=False)
     tipo: Mapped[TipoArticuloInventarioEnum] = mapped_column(SAEnum(TipoArticuloInventarioEnum), nullable=False)
     unidad_medida: Mapped[str] = mapped_column(String(20), default="kg")
-    stock_minimo: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0)
     stock_actual: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0)
+    stock_minimo: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0)
     activo: Mapped[bool] = mapped_column(Boolean, default=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
