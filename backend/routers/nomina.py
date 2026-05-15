@@ -79,7 +79,7 @@ async def calcular_nomina_empleado(empleado: NominaEmpleado, tasa_bcv: Decimal, 
     salario_integral = s + alic_vac + alic_util
 
     # 3. ISLR (ARI) - Blindado
-    ari = Decimal(str(empleado.porcentaje_ari)) if empleado.porcentaje_ari is not None else Decimal("0")
+    ari = Decimal(str(empleado.porcentaje_ari)) if empleado.porcentaje_ari else Decimal("0")
     islr = r((s * ari) / Decimal("100"))
     
     # 4. Topes Legales (SSO: 5 SM, RPE: 10 SM)
@@ -164,14 +164,19 @@ async def crear_empleado(
             # Si existía pero estaba inactivo, lo reactivamos y actualizamos sus datos
             for key, value in data.model_dump().items():
                 setattr(existing, key, value)
+            
+            # Forzar Decimal explícito para ARI y asegurar Commit
+            existing.porcentaje_ari = Decimal(str(data.porcentaje_ari))
             existing.activo = True
             await db.flush()
+            await db.commit()
             return EmpleadoOut.model_validate(existing)
 
     # Si no existe, crear uno nuevo
     emp = NominaEmpleado(**data.model_dump(), empresa_id=current_user.empresa_id)
     db.add(emp)
     await db.flush()
+    await db.commit()
     return EmpleadoOut.model_validate(emp)
 
 
