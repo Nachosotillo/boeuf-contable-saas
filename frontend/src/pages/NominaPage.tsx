@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import toast from 'react-hot-toast'
 import { nominaApi } from '@/services/api'
-import { fmtBs, exportarExcel, extractError, calcularISLR } from '@/utils'
+import { fmtBs, exportarExcel, extractError } from '@/utils'
 import { PageHeader, ExportBar, EmptyState, Spinner, Modal, Field } from '@/components/Common'
 import type { EmpleadoOut, NominaCalculadaOut, EmpleadoCreate } from '@/types'
 
@@ -15,10 +15,11 @@ export default function NominaPage() {
   const { data: empleados = [], isLoading: loadEmp } = useQuery<EmpleadoOut[]>({ queryKey: ['empleados'], queryFn: () => nominaApi.listarEmpleados().then(r => r.data) })
   const { data: nomina = [] } = useQuery<NominaCalculadaOut[]>({ queryKey: ['nomina'], queryFn: () => nominaApi.calcular().then(r => r.data), enabled: empleados.length > 0 })
 
-  const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<EmpleadoCreate>({ defaultValues: { salario_base: 3500, bono_alimentacion: 0, anos_servicio: 0, tipo: 'MOD' } })
+  const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<EmpleadoCreate>({ defaultValues: { salario_base: 3500, bono_alimentacion: 0, anos_servicio: 0, tipo: 'MOD', porcentaje_ari: 0 } })
 
   const salarioWatch = watch('salario_base')
-  const islrPreview = calcularISLR(Number(salarioWatch) || 0)
+  const ariWatch = watch('porcentaje_ari')
+  const islrPreview = (Number(salarioWatch) || 0) * ((Number(ariWatch) || 0) / 100)
 
   const crearEmp = useMutation({
     mutationFn: (data: EmpleadoCreate) => nominaApi.crearEmpleado(data),
@@ -33,7 +34,7 @@ export default function NominaPage() {
   })
 
   const handleExport = () => nomina.length && exportarExcel(
-    nomina.map(n => ({ Cédula: n.cedula, Nombre: n.nombre, Cargo: n.cargo, Salario: n.salario_base, ISLR: n.islr_deducido, 'SSO 4%': n.sso_empleado, 'FAOV 1%': n.faov_empleado, 'INCES 0.5%': n.inces_empleado, 'Pensión 9%': n.proteccion_pensiones_emp, 'Total Ded.': n.total_deducciones, 'Neto a Pagar': n.neto_a_pagar, 'Costo Empresa': n.costo_total_empresa })),
+    nomina.map(n => ({ Cédula: n.cedula, Nombre: n.nombre, Cargo: n.cargo, Salario: n.salario_base, ISLR: n.islr_deducido, 'SSO 4%': n.sso_empleado, 'Paro Forzoso 0.5%': n.rpe_empleado, 'FAOV 1%': n.faov_empleado, 'INCES 0.5%': n.inces_empleado, 'Pensión 9%': n.proteccion_pensiones_emp, 'Total Ded.': n.total_deducciones, 'Neto a Pagar': n.neto_a_pagar, 'Costo Empresa': n.costo_total_empresa })),
     'Nomina'
   )
 
@@ -42,7 +43,7 @@ export default function NominaPage() {
 
   return (
     <div>
-      <PageHeader title="Nómina + ISLR Progresivo" subtitle="Cálculo automático con cargas sociales vigentes"
+      <PageHeader title="Nómina y Retenciones Legales" subtitle="Cálculo automático con topes salariales y cargas sociales vigentes"
         actions={
           <div className="flex gap-2">
             <button onClick={() => setOpenEmp(true)} className="btn-primary btn-sm"><i className="ti ti-plus" /> Agregar empleado</button>
@@ -54,7 +55,7 @@ export default function NominaPage() {
 
       {/* Leyenda tasas */}
       <div className="flex flex-wrap gap-2 mb-4">
-        {[['SSO', '4%/9%'], ['FAOV', '1%/2%'], ['INCES', '0.5%/2%'], ['Pensiones', '9%/9%'], ['ISLR', 'Progresivo']].map(([k, v]) => (
+        {[['SSO', '4%/10%'], ['Paro Forzoso', '0.5%/2%'], ['FAOV', '1%/2%'], ['INCES', '0%/2%'], ['Pensiones', '0%/9%'], ['ISLR', '% ARI']].map(([k, v]) => (
           <span key={k} className="badge badge-gray text-[10px]">{k}: <strong>{v}</strong></span>
         ))}
       </div>
@@ -69,7 +70,7 @@ export default function NominaPage() {
                 <tr>
                   <th>Cédula</th><th>Nombre</th><th>Cargo</th>
                   <th className="text-right">Salario</th><th className="text-right">ISLR</th>
-                  <th className="text-right">SSO</th><th className="text-right">FAOV</th>
+                  <th className="text-right">SSO</th><th className="text-right">Paro Forzoso</th><th className="text-right">FAOV</th>
                   <th className="text-right">INCES</th><th className="text-right">Pensión</th>
                   <th className="text-right">Total Ded.</th>
                   <th className="text-right" style={{ color: '#1D9E75' }}>Neto</th>
@@ -85,6 +86,7 @@ export default function NominaPage() {
                     <td className="text-right font-mono">{fmtBs(n.salario_base)}</td>
                     <td className="text-right font-mono text-danger text-xs">{fmtBs(n.islr_deducido)}</td>
                     <td className="text-right font-mono text-xs">{fmtBs(n.sso_empleado)}</td>
+                    <td className="text-right font-mono text-xs">{fmtBs(n.rpe_empleado)}</td>
                     <td className="text-right font-mono text-xs">{fmtBs(n.faov_empleado)}</td>
                     <td className="text-right font-mono text-xs">{fmtBs(n.inces_empleado)}</td>
                     <td className="text-right font-mono text-xs">{fmtBs(n.proteccion_pensiones_emp)}</td>
@@ -92,7 +94,7 @@ export default function NominaPage() {
                     <td className="text-right font-mono text-brand-600 font-semibold">{fmtBs(n.neto_a_pagar)}</td>
                     <td className="text-right font-mono text-blue-600 text-xs">{fmtBs(n.costo_total_empresa)}</td>
                   </tr>
-                )) : <tr><td colSpan={12}><EmptyState icon="ti-users" message="Sin empleados. Agrega el primero." action={<button onClick={() => setOpenEmp(true)} className="btn-primary btn-sm">Agregar empleado</button>} /></td></tr>}
+                )) : <tr><td colSpan={13}><EmptyState icon="ti-users" message="Sin empleados. Agrega el primero." action={<button onClick={() => setOpenEmp(true)} className="btn-primary btn-sm">Agregar empleado</button>} /></td></tr>}
               </tbody>
             </table>
           </div>
@@ -114,11 +116,16 @@ export default function NominaPage() {
             <Field label="Nombre completo" required error={errors.nombre_completo?.message}><input className="input" placeholder="Juan Pérez" {...register('nombre_completo', { required: 'Requerido' })} /></Field>
             <Field label="Cargo"><input className="input" placeholder="Operario de Producción" {...register('cargo')} /></Field>
             <Field label="Tipo"><select className="input" {...register('tipo')}><option value="MOD">MOD — Directo</option><option value="MOI">MOI — Indirecto</option></select></Field>
-            <Field label="Salario base mensual (Bs.)" required>
+            <Field label="Salario base (Bs.)" required>
               <input type="number" min="0" step="0.01" className="input" {...register('salario_base', { required: true, min: 0 })} />
-              {islrPreview > 0 && <p className="text-xs text-surface-500 mt-1">ISLR estimado: <strong className="text-danger">{fmtBs(islrPreview)}</strong></p>}
             </Field>
-            <Field label="Años de servicio"><input type="number" min="0" className="input" {...register('anos_servicio')} /></Field>
+            <Field label="Porcentaje ARI (%)" error={errors.porcentaje_ari?.message}>
+              <div className="relative">
+                <input type="number" min="0" max="100" step="0.01" className="input pr-8" placeholder="2.79" {...register('porcentaje_ari', { valueAsNumber: true, min: 0, max: 100 })} />
+                <span className="absolute right-3 top-2 text-surface-400">%</span>
+              </div>
+              {islrPreview > 0 && <p className="text-xs text-surface-500 mt-1">ISLR a descontar: <strong className="text-danger">{fmtBs(islrPreview)}</strong></p>}
+            </Field>
           </div>
         </div>
       </Modal>
