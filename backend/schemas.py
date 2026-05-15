@@ -30,7 +30,7 @@ class TokenResponse(BaseModel):
 
 class EmpresaCreate(BaseModel):
     nombre_razon_social: str = Field(..., min_length=2, max_length=255)
-    rif: str = Field(..., pattern=r"^[JVGEjvge]-\d{8}-\d$")
+    rif: str = Field(..., pattern=r"^[JVGEjvge]-\d{7,8}-\d$")
     tipo_persona: TipoPersonaEnum
     direccion: Optional[str] = None
     telefono: Optional[str] = None
