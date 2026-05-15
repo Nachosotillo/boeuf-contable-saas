@@ -10,10 +10,11 @@ import type { EmpleadoOut, NominaCalculadaOut, EmpleadoCreate } from '@/types'
 
 export default function NominaPage() {
   const [openEmp, setOpenEmp] = useState(false)
+  const [lunes, setLunes] = useState(4)
   const qc = useQueryClient()
 
   const { data: empleados = [], isLoading: loadEmp } = useQuery<EmpleadoOut[]>({ queryKey: ['empleados'], queryFn: () => nominaApi.listarEmpleados().then(r => r.data) })
-  const { data: nomina = [] } = useQuery<NominaCalculadaOut[]>({ queryKey: ['nomina'], queryFn: () => nominaApi.calcular().then(r => r.data), enabled: empleados.length > 0 })
+  const { data: nomina = [] } = useQuery<NominaCalculadaOut[]>({ queryKey: ['nomina', lunes], queryFn: () => nominaApi.calcular({ lunes }).then(r => r.data), enabled: empleados.length > 0 })
 
   const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<EmpleadoCreate>({ defaultValues: { salario_base: 3500, bono_alimentacion: 0, anos_servicio: 0, tipo: 'MOD', porcentaje_ari: 0 } })
 
@@ -24,6 +25,12 @@ export default function NominaPage() {
   const crearEmp = useMutation({
     mutationFn: (data: EmpleadoCreate) => nominaApi.crearEmpleado(data),
     onSuccess: () => { toast.success('Empleado agregado ✓'); qc.invalidateQueries({ queryKey: ['empleados'] }); qc.invalidateQueries({ queryKey: ['nomina'] }); setOpenEmp(false); reset() },
+    onError: (err) => toast.error(extractError(err)),
+  })
+
+  const eliminarEmp = useMutation({
+    mutationFn: (id: number) => nominaApi.eliminarEmpleado(id),
+    onSuccess: () => { toast.success('Empleado eliminado ✓'); qc.invalidateQueries({ queryKey: ['empleados'] }); qc.invalidateQueries({ queryKey: ['nomina'] }) },
     onError: (err) => toast.error(extractError(err)),
   })
 
@@ -43,9 +50,16 @@ export default function NominaPage() {
 
   return (
     <div>
-      <PageHeader title="Nómina y Retenciones Legales" subtitle="Cálculo automático con topes salariales y cargas sociales vigentes"
+      <PageHeader title="Nómina y Retenciones Legales" subtitle="Cálculo automático con topes salariales y cargas sociales según LOTTT/IVSS"
         actions={
           <div className="flex gap-2">
+            <div className="flex items-center gap-2 mr-4 bg-surface-50 px-3 py-1 rounded-lg border border-surface-200">
+              <label className="text-xs font-medium text-surface-600">Lunes del mes:</label>
+              <select value={lunes} onChange={e => setLunes(Number(e.target.value))} className="bg-transparent font-bold text-brand-600 outline-none">
+                <option value={4}>4 Lunes</option>
+                <option value={5}>5 Lunes</option>
+              </select>
+            </div>
             <button onClick={() => setOpenEmp(true)} className="btn-primary btn-sm"><i className="ti ti-plus" /> Agregar empleado</button>
             <button onClick={() => genAsiento.mutate()} disabled={!empleados.length || genAsiento.isPending} className="btn-secondary btn-sm">
               {genAsiento.isPending ? <><i className="ti ti-loader-2 animate-spin" /> Generando…</> : <><i className="ti ti-notebook" /> Generar asiento</>}
@@ -79,22 +93,27 @@ export default function NominaPage() {
               </thead>
               <tbody>
                 {nomina.length ? nomina.map(n => (
-                  <tr key={n.empleado_id}>
+                  <tr key={n.empleado_id} className="group">
                     <td className="font-mono text-xs">{n.cedula}</td>
                     <td className="font-medium">{n.nombre}</td>
                     <td className="text-surface-500 text-xs">{n.cargo || '—'}</td>
-                    <td className="text-right font-mono">{fmtBs(n.salario_base)}</td>
+                    <td className="text-right font-mono text-sm">{fmtBs(n.salario_base)}</td>
                     <td className="text-right font-mono text-danger text-xs">{fmtBs(n.islr_deducido)}</td>
                     <td className="text-right font-mono text-xs">{fmtBs(n.sso_empleado)}</td>
-                    <td className="text-right font-mono text-xs">{fmtBs(n.rpe_empleado)}</td>
+                    <td className="text-right font-mono text-xs text-brand-600 font-medium">{fmtBs(n.rpe_empleado)}</td>
                     <td className="text-right font-mono text-xs">{fmtBs(n.faov_empleado)}</td>
                     <td className="text-right font-mono text-xs">{fmtBs(n.inces_empleado)}</td>
                     <td className="text-right font-mono text-xs">{fmtBs(n.proteccion_pensiones_emp)}</td>
                     <td className="text-right font-mono text-danger font-semibold">{fmtBs(n.total_deducciones)}</td>
-                    <td className="text-right font-mono text-brand-600 font-semibold">{fmtBs(n.neto_a_pagar)}</td>
+                    <td className="text-right font-mono text-brand-600 font-bold">{fmtBs(n.neto_a_pagar)}</td>
                     <td className="text-right font-mono text-blue-600 text-xs">{fmtBs(n.costo_total_empresa)}</td>
+                    <td className="text-right">
+                      <button onClick={() => { if(confirm('¿Desactivar empleado?')) eliminarEmp.mutate(n.empleado_id) }} className="opacity-0 group-hover:opacity-100 p-1 text-danger hover:bg-danger/10 rounded transition-all" title="Eliminar">
+                        <i className="ti ti-trash" />
+                      </button>
+                    </td>
                   </tr>
-                )) : <tr><td colSpan={13}><EmptyState icon="ti-users" message="Sin empleados. Agrega el primero." action={<button onClick={() => setOpenEmp(true)} className="btn-primary btn-sm">Agregar empleado</button>} /></td></tr>}
+                )) : <tr><td colSpan={14}><EmptyState icon="ti-users" message="Sin empleados. Agrega el primero." action={<button onClick={() => setOpenEmp(true)} className="btn-primary btn-sm">Agregar empleado</button>} /></td></tr>}
               </tbody>
             </table>
           </div>
