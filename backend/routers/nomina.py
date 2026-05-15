@@ -6,6 +6,7 @@ Router: Nómina
 - Generación automática de asiento contable
 """
 
+from typing import Optional, List
 from datetime import date
 import calendar
 from decimal import Decimal, ROUND_HALF_UP
