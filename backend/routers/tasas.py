@@ -12,6 +12,11 @@ from routers.auth import get_current_user
 
 router = APIRouter()
 
+async def obtener_tasa_actual(db: AsyncSession):
+    result = await db.execute(
+        select(TasaCambioBcv).order_by(TasaCambioBcv.fecha.desc()).limit(1)
+    )
+    return result.scalar_one_or_none()
 
 @router.get("/actual", response_model=TasaBcvOut)
 async def tasa_actual(
