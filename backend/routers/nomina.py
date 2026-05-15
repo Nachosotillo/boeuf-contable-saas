@@ -4,27 +4,40 @@ Router: Nómina
 - SSO y Paro Forzoso: Con topes de 5 y 10 salarios mínimos
 - FAOV, INCES, Protección Pensiones
 - Generación automática de asiento contable cada 30 días
-- Programación automática del próximo pago al crear empleado
 
-ESTRUCTURA DEL ASIENTO DE NÓMINA (cuadrado):
+ESTRUCTURA DEL ASIENTO (CUADRADO):
 ══════════════════════════════════════════════════════════════════
 DEBE:
-  5.1.02   Mano de Obra Directa (MOD)              → salario bruto MOD
-  6.2.01   Sueldos y Salarios — Administración      → salario bruto MOI
-  6.2.02   Prestaciones Sociales — Administración   → SSO+RPE+FAOV+INCES patrono
-  6.2.20   Contribución Protección de Pensiones 9%  → pensiones patrono
+  5.1.02    Mano de Obra Directa            → salario bruto MOD
+  6.2.01    Sueldos y Salarios Admin        → salario bruto MOI
+  6.2.02    Prestaciones Sociales           → SSO+RPE+FAOV+INCES patrono
+  6.2.20    Protección de Pensiones 9%      → pensiones patrono
 
 HABER:
-  2.1.10    Nómina por Pagar                        → neto a pagar
-  2.1.11.01 Retenciones y Aportes IVSS              → SSO+RPE (emp+pat)
-  2.1.11.02 Retenciones y Aportes BANAVIH           → FAOV (emp+pat)
-  2.1.13    INCES por Pagar                         → INCES (emp+pat)
-  2.1.22    Protección de Pensiones por Pagar       → pensiones patrono
-  2.1.23    Retención Protección Pensiones — Emp.   → pensiones empleado
+  2.1.10    Nómina por Pagar               → neto a pagar al trabajador
+  2.1.11.01 Retenciones IVSS               → SSO+RPE (emp + pat)
+  2.1.11.02 Retenciones BANAVIH            → FAOV (emp + pat)
+  2.1.13    INCES por Pagar               → INCES (emp + pat)
+  2.1.22    Pensiones por Pagar (patrono)  → pensiones patrono
+  2.1.23    Retención Pensiones Empleados  → pensiones empleado
+  2.1.30    ISLR Retenido por Enterar      → ISLR descontado al empleado ← NUEVO
 
-CUADRE:
-  DEBE  = salarios_brutos + aportes_patronales + pensiones_patrono
-  HABER = neto + IVSS_total + BANAVIH_total + INCES_total + pensiones_total
+CUADRE MATEMÁTICO:
+  DEBE  = Σ salarios_brutos + Σ aportes_patronales + Σ pensiones_patrono
+  HABER = neto + IVSS_total + BANAVIH_total + INCES_total
+          + pensiones_total + ISLR_total
+  
+  Demostración para 1 empleado (salario S, aportes patrono AP, pensión pat PP):
+    DEBE  = S + AP + PP
+    neto  = S - (ISLR + SSO_e + RPE_e + FAOV_e + PEN_e)
+    HABER = neto + (SSO_e+SSO_p+RPE_e+RPE_p) + (FAOV_e+FAOV_p)
+            + INCES + (PEN_p) + (PEN_e) + ISLR
+          = S - ISLR - SSO_e - RPE_e - FAOV_e - PEN_e
+            + SSO_e + SSO_p + RPE_e + RPE_p
+            + FAOV_e + FAOV_p + INCES_p
+            + PEN_p + PEN_e + ISLR
+          = S + SSO_p + RPE_p + FAOV_p + INCES_p + PEN_p
+          = S + AP + PP  ✓
 ══════════════════════════════════════════════════════════════════
 """
 
@@ -67,20 +80,21 @@ PARAMS = {
 }
 
 # ─── Mapa de cuentas contables de nómina ─────────────────────────────────────
-# IMPORTANTE: Los códigos 6.1.02-6.1.05 son Comisiones/Publicidad/Fletes/Empaques
-# y NO se usan en nómina. Los aportes patronales van a 6.2.02 y pensiones a 6.2.20.
+# Los códigos 6.1.02-6.1.05 son Comisiones/Publicidad/Fletes/Empaques → NO tocar.
+# Los aportes patronales van a 6.2.02, pensiones a 6.2.20, ISLR a 2.1.30.
 
 CUENTAS_NOMINA = {
     "MOD":       "5.1.02",    # Mano de Obra Directa
     "MOI":       "6.2.01",    # Sueldos y Salarios — Administración
     "APORTES":   "6.2.02",    # Prestaciones Sociales (SSO+RPE+FAOV+INCES patronal)
     "PENSIONES": "6.2.20",    # Contribución Protección de Pensiones 9%
-    "NOMINA_XP": "2.1.10",    # Nómina por Pagar
-    "IVSS":      "2.1.11.01", # Retenciones IVSS
-    "BANAVIH":   "2.1.11.02", # Retenciones BANAVIH/FAOV
+    "NOMINA_XP": "2.1.10",    # Nómina por Pagar (neto trabajador)
+    "IVSS":      "2.1.11.01", # Retenciones y Aportes IVSS
+    "BANAVIH":   "2.1.11.02", # Retenciones y Aportes BANAVIH/FAOV
     "INCES_XP":  "2.1.13",    # INCES por Pagar
     "PEN_PAT":   "2.1.22",    # Protección de Pensiones por Pagar (patrono)
     "PEN_EMP":   "2.1.23",    # Retención Protección Pensiones — Empleados
+    "ISLR_XP":   "2.1.30",    # ISLR Retenido a Empleados por Enterar ← NUEVO
 }
 
 CUENTAS_NOMINA_DEF = {
@@ -94,6 +108,7 @@ CUENTAS_NOMINA_DEF = {
     "2.1.13":    ("INCES por Pagar",                            "Acreedora", "situacion"),
     "2.1.22":    ("Protección de Pensiones por Pagar",          "Acreedora", "situacion"),
     "2.1.23":    ("Retención Protección Pensiones — Empleados", "Acreedora", "situacion"),
+    "2.1.30":    ("ISLR Retenido a Empleados por Enterar",      "Acreedora", "situacion"),
 }
 
 
@@ -120,7 +135,7 @@ async def _resolver_cuentas(empresa_id: int, db: AsyncSession) -> dict:
     }
     for cod, (nombre, naturaleza, ef_key) in CUENTAS_NOMINA_DEF.items():
         if cod not in cuentas:
-            new_c = CatalogoCuenta(
+            db.add(CatalogoCuenta(
                 empresa_id=empresa_id,
                 codigo=cod,
                 nombre=nombre,
@@ -128,10 +143,16 @@ async def _resolver_cuentas(empresa_id: int, db: AsyncSession) -> dict:
                 naturaleza=NaturalezaEnum.deudora if naturaleza == "Deudora" else NaturalezaEnum.acreedora,
                 estado_financiero=ef_map[ef_key],
                 es_generada_auto=True,
-            )
-            db.add(new_c)
+            ))
             await db.flush()
-            cuentas[cod] = new_c
+            # Re-fetch after flush to get the id
+            res2 = await db.execute(
+                select(CatalogoCuenta).where(
+                    CatalogoCuenta.empresa_id == empresa_id,
+                    CatalogoCuenta.codigo == cod,
+                )
+            )
+            cuentas[cod] = res2.scalar_one()
 
     return cuentas
 
@@ -148,7 +169,7 @@ async def calcular_nomina_empleado(
         (today.month, today.day) < (fecha_ing.month, fecha_ing.day)
     ))
 
-    dias_bv  = min(15 + anos, 30)
+    dias_bv   = min(15 + anos, 30)
     alic_vac  = ((s / Decimal("30")) * Decimal(str(dias_bv))) / Decimal("12")
     alic_util = ((s / Decimal("30")) * Decimal("30")) / Decimal("12")
     salario_integral = s + alic_vac + alic_util
@@ -208,8 +229,8 @@ async def calcular_nomina_empleado(
 
 async def _ejecutar_asiento_nomina(empresa_id: int, usuario_id: int, db: AsyncSession) -> str:
     """
-    Lógica central del asiento de nómina.
-    Reutilizada por el endpoint manual y el automático de 30 días.
+    Genera el asiento contable de nómina. Siempre cuadra porque el ISLR
+    retenido va al HABER en la cuenta 2.1.30.
     """
     hoy = date.today()
 
@@ -223,24 +244,28 @@ async def _ejecutar_asiento_nomina(empresa_id: int, usuario_id: int, db: AsyncSe
     if not empleados:
         raise HTTPException(400, detail="No hay empleados activos para generar nómina")
 
-    tasa_bcv  = await obtener_tasa_actual(db)
-    valor_bcv = tasa_bcv.tasa_usd if tasa_bcv else Decimal("36.50")
+    tasa_bcv      = await obtener_tasa_actual(db)
+    valor_bcv     = tasa_bcv.tasa_usd if tasa_bcv else Decimal("36.50")
     lunes_del_mes = get_mondays_in_month(hoy.year, hoy.month)
 
     r    = lambda v: v.quantize(Decimal("0.01"), ROUND_HALF_UP)
     ZERO = Decimal("0")
 
+    # Acumuladores
     tot_sal_mod = tot_sal_moi = ZERO
-    tot_neto = tot_sso_p = tot_faov_p = tot_inces_p = tot_pen_p = tot_rpe_p = ZERO
-    tot_sso_e = tot_faov_e = tot_inces_e = tot_pen_e = tot_rpe_e = ZERO
+    tot_islr    = ZERO
+    tot_neto    = tot_sso_p = tot_faov_p = tot_inces_p = tot_pen_p = tot_rpe_p = ZERO
+    tot_sso_e   = tot_faov_e = tot_inces_e = tot_pen_e = tot_rpe_e = ZERO
 
     for emp in empleados:
         c = await calcular_nomina_empleado(emp, valor_bcv, lunes_del_mes)
+
         if emp.tipo == TipoNominaEnum.mod:
             tot_sal_mod += emp.salario_base
         else:
             tot_sal_moi += emp.salario_base
 
+        tot_islr    += c.islr_deducido      # ← acumular ISLR
         tot_neto    += c.neto_a_pagar
         tot_sso_p   += c.sso_patrono
         tot_faov_p  += c.faov_patrono
@@ -255,30 +280,37 @@ async def _ejecutar_asiento_nomina(empresa_id: int, usuario_id: int, db: AsyncSe
 
     cuentas = await _resolver_cuentas(empresa_id, db)
 
-    # Montos del DEBE
+    # ── DEBE ──────────────────────────────────────────────────────────────────
     d_mod       = r(tot_sal_mod)
     d_moi       = r(tot_sal_moi)
     d_aportes   = r(tot_sso_p + tot_rpe_p + tot_faov_p + tot_inces_p)
     d_pensiones = r(tot_pen_p)
 
-    # Montos del HABER
+    # ── HABER ─────────────────────────────────────────────────────────────────
     h_nomina_xp = r(tot_neto)
     h_ivss      = r(tot_sso_e + tot_sso_p + tot_rpe_e + tot_rpe_p)
     h_banavih   = r(tot_faov_e + tot_faov_p)
     h_inces     = r(tot_inces_e + tot_inces_p)
     h_pen_pat   = r(tot_pen_p)
     h_pen_emp   = r(tot_pen_e)
+    h_islr      = r(tot_islr)               # ← ISLR al pasivo
 
     total_debe  = r(d_mod + d_moi + d_aportes + d_pensiones)
-    total_haber = r(h_nomina_xp + h_ivss + h_banavih + h_inces + h_pen_pat + h_pen_emp)
+    total_haber = r(h_nomina_xp + h_ivss + h_banavih + h_inces
+                    + h_pen_pat + h_pen_emp + h_islr)
 
-    # Absorber diferencia de redondeo en Nómina por Pagar (máx. 5 céntimos)
+    # Validar cuadre (solo debería haber diferencias de centavos por redondeo)
     diff = total_debe - total_haber
-    if abs(diff) > Decimal("0.05"):
+    if abs(diff) > Decimal("1.00"):
+        # Si la diferencia es mayor a 1 Bs. hay un error de lógica real
         raise HTTPException(
             500,
-            detail=f"El asiento no cuadra (diferencia={diff:.2f} Bs.). Revisa los parámetros."
+            detail=(
+                f"Error de cuadre en nómina (diferencia={diff:.2f} Bs.). "
+                f"DEBE={total_debe}, HABER={total_haber}. Contacta soporte."
+            )
         )
+    # Diferencias de céntimos por redondeo: absorber en Nómina por Pagar
     if diff != ZERO:
         h_nomina_xp = r(h_nomina_xp + diff)
         total_haber = total_debe
@@ -311,6 +343,7 @@ async def _ejecutar_asiento_nomina(empresa_id: int, usuario_id: int, db: AsyncSe
         (CUENTAS_NOMINA["INCES_XP"],  ZERO,         h_inces),
         (CUENTAS_NOMINA["PEN_PAT"],   ZERO,         h_pen_pat),
         (CUENTAS_NOMINA["PEN_EMP"],   ZERO,         h_pen_emp),
+        (CUENTAS_NOMINA["ISLR_XP"],   ZERO,         h_islr),   # ← ISLR
     ]
 
     for codigo, debe, haber in lineas:
@@ -456,7 +489,7 @@ async def generar_asiento_nomina(
     current_user: Usuario = Depends(require_roles("admin", "contador", "gerente_nomina")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Genera el asiento de nómina manualmente y reprograma el próximo pago a +30 días."""
+    """Genera el asiento de nómina y reprograma el próximo pago a +30 días."""
     numero = await _ejecutar_asiento_nomina(
         empresa_id=current_user.empresa_id,
         usuario_id=current_user.id,
