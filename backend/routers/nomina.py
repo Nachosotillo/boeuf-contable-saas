@@ -78,9 +78,9 @@ async def calcular_nomina_empleado(empleado: NominaEmpleado, tasa_bcv: Decimal, 
     alic_util = ((s / Decimal("30")) * Decimal(str(dias_util))) / Decimal("12")
     salario_integral = s + alic_vac + alic_util
 
-    # 3. ISLR (ARI)
-    ari = empleado.porcentaje_ari if empleado.porcentaje_ari is not None else Decimal("0")
-    islr = r(s * (ari / Decimal("100")))
+    # 3. ISLR (ARI) - Blindado
+    ari = Decimal(str(empleado.porcentaje_ari)) if empleado.porcentaje_ari is not None else Decimal("0")
+    islr = r((s * ari) / Decimal("100"))
     
     # 4. Topes Legales (SSO: 5 SM, RPE: 10 SM)
     tope_sso = PARAMS["SALARIO_MINIMO_BS"] * Decimal("5")
@@ -91,27 +91,27 @@ async def calcular_nomina_empleado(empleado: NominaEmpleado, tasa_bcv: Decimal, 
     
     # 5. SSO (Semanal: (Base * 12) / 52)
     sso_sem = (base_sso * Decimal("12")) / Decimal("52")
-    sso_e = r(sso_sem * PARAMS["SSO_EMP"] * Decimal(str(lunes_mes)))
-    sso_p = r(sso_sem * PARAMS["SSO_PAT"] * Decimal(str(lunes_mes)))
+    sso_e = r(sso_sem * Decimal("0.04") * Decimal(str(lunes_mes)))
+    sso_p = r(sso_sem * Decimal("0.10") * Decimal(str(lunes_mes)))
 
     # 6. RPE (Paro Forzoso)
     rpe_sem = (base_rpe * Decimal("12")) / Decimal("52")
-    rpe_e = r(rpe_sem * PARAMS["RPE_EMP"] * Decimal(str(lunes_mes)))
-    rpe_p = r(rpe_sem * PARAMS["RPE_PAT"] * Decimal(str(lunes_mes)))
+    rpe_e = r(rpe_sem * Decimal("0.005") * Decimal(str(lunes_mes)))
+    rpe_p = r(rpe_sem * Decimal("0.02") * Decimal(str(lunes_mes)))
 
     # 7. FAOV (1% Empleado / 2% Patrono del Salario Integral)
-    faov_e = r(salario_integral * PARAMS["FAOV_EMP"])
-    faov_p = r(salario_integral * PARAMS["FAOV_PAT"])
+    faov_e = r(salario_integral * Decimal("0.01"))
+    faov_p = r(salario_integral * Decimal("0.02"))
     
     # 8. INCES e Impuesto a las Pensiones
-    inces_e = r(s * PARAMS["INCES_EMP"])
-    inces_p = r(s * PARAMS["INCES_PAT"])
+    inces_e = r(s * Decimal("0.00"))
+    inces_p = r(s * Decimal("0.02"))
     
     tasa = Decimal(str(tasa_bcv)) if tasa_bcv else Decimal("36.50")
     piso_pensiones = PARAMS["INGRESO_MINIMO_PENSIONES_USD"] * tasa
     base_pensiones = max(s, piso_pensiones)
-    pen_e = r(s * PARAMS["PEN_EMP"])
-    pen_p = r(base_pensiones * PARAMS["PEN_PAT"])
+    pen_e = r(s * Decimal("0.00"))
+    pen_p = r(base_pensiones * Decimal("0.09"))
     
     total_ded = islr + sso_e + rpe_e + faov_e + inces_e + pen_e
     neto = r(s - total_ded)
