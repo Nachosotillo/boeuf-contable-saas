@@ -125,6 +125,7 @@ export interface EmpleadoCreate {
   salario_base: number
   bono_alimentacion?: number
   anos_servicio?: number
+  porcentaje_ari?: number
   fecha_inicio?: string
 }
 
@@ -144,12 +145,14 @@ export interface NominaCalculadaOut {
   sso_empleado: number
   faov_empleado: number
   inces_empleado: number
+  rpe_empleado: number
   proteccion_pensiones_emp: number
   total_deducciones: number
   neto_a_pagar: number
   sso_patrono: number
   faov_patrono: number
   inces_patrono: number
+  rpe_patrono: number
   proteccion_pensiones_pat: number
   costo_total_empresa: number
 }
