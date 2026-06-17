@@ -9,7 +9,8 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from models import (
     TipoPersonaEnum, TipoContribuyenteEnum, RolEnum,
     TipoCuentaEnum, NaturalezaEnum, EstadoFinancieroEnum,
-    TipoAjusteEnum, TipoMovimientoInvEnum, TipoArticuloInventarioEnum, TipoNominaEnum
+    TipoAjusteEnum, TipoMovimientoInvEnum, TipoArticuloInventarioEnum, TipoNominaEnum,
+    OrigenAsientoEnum,
 )
 
 
@@ -118,6 +119,8 @@ class AsientoCreate(BaseModel):
     fecha: date
     descripcion: Optional[str] = None
     referencia: Optional[str] = None
+    origen: Optional[OrigenAsientoEnum] = None
+    es_prueba: bool = False
     lineas: List[LineaAsientoIn] = Field(..., min_length=2)
 
     @field_validator("lineas")
@@ -140,6 +143,10 @@ class LineaAsientoOut(BaseModel):
     debe: Decimal
     haber: Decimal
     moneda: str
+    tasa_cambio_aplicada: Optional[Decimal] = None
+    numero_factura: Optional[str] = None
+    descripcion: Optional[str] = None
+    folio_mayor: Optional[int] = None   # PR: folio del Mayor (se completa en la exportación)
     model_config = {"from_attributes": True}
 
 
@@ -153,6 +160,8 @@ class AsientoOut(BaseModel):
     total_debe: Decimal
     total_haber: Decimal
     cuadra: bool
+    origen: Optional[str] = None
+    es_prueba: Optional[bool] = None
     lineas: List[LineaAsientoOut] = []
     model_config = {"from_attributes": True}
 

@@ -94,6 +94,30 @@ class AccionAuditoriaEnum(str, enum.Enum):
     reversion = "REVERSIÓN"
 
 
+class OrigenAsientoEnum(str, enum.Enum):
+    """Clasifica de dónde proviene un asiento (para filtros, libros y limpieza)."""
+    manual = "manual"
+    plantilla = "plantilla"
+    apertura = "apertura"
+    compra = "compra"
+    venta = "venta"
+    costo_venta = "costo_venta"
+    nomina = "nomina"
+    iva = "iva"
+    servicios = "servicios"
+    impuesto = "impuesto"
+    cierre = "cierre"
+    reverso = "reverso"
+    ajuste = "ajuste"
+
+
+class PeriodicidadEnum(str, enum.Enum):
+    unica = "unica"
+    mensual = "mensual"
+    trimestral = "trimestral"
+    anual = "anual"
+
+
 # ─── Tablas principales ───────────────────────────────────────────────────────
 
 class Empresa(Base):
@@ -185,6 +209,12 @@ class Asiento(Base):
     mes: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     descripcion: Mapped[Optional[str]] = mapped_column(String(500))
     referencia: Mapped[Optional[str]] = mapped_column(String(100))
+    origen: Mapped[OrigenAsientoEnum] = mapped_column(
+        SAEnum(OrigenAsientoEnum, native_enum=False, length=20),
+        default=OrigenAsientoEnum.manual, index=True
+    )
+    plantilla_id: Mapped[Optional[int]] = mapped_column(ForeignKey("plantilla_asiento.id"))
+    es_prueba: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     total_debe: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     total_haber: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     cuadra: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -424,6 +454,7 @@ class LibroIvaCompra(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     empresa_id: Mapped[int] = mapped_column(ForeignKey("empresa.id", ondelete="CASCADE"), nullable=False, index=True)
+    asiento_id: Mapped[Optional[int]] = mapped_column(ForeignKey("asiento.id"))  # asiento que la originó
     fecha: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     numero_factura: Mapped[str] = mapped_column(String(100), nullable=False)
     proveedor: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -445,6 +476,7 @@ class LibroIvaVenta(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     empresa_id: Mapped[int] = mapped_column(ForeignKey("empresa.id", ondelete="CASCADE"), nullable=False, index=True)
+    asiento_id: Mapped[Optional[int]] = mapped_column(ForeignKey("asiento.id"))  # asiento que la originó
     fecha: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     numero_factura: Mapped[str] = mapped_column(String(100), nullable=False)
     cliente: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -531,6 +563,51 @@ class ParametroSistema(Base):
     __table_args__ = (
         UniqueConstraint("empresa_id", "clave", name="uq_empresa_clave"),
     )
+
+
+class PlantillaAsiento(Base):
+    """
+    Plantilla reutilizable de asiento (nómina, compras, ventas, IVA, servicios…).
+    El motor de instanciación (router de plantillas) resuelve los montos y crea
+    un Asiento real vía crear_asiento_interno().
+    """
+    __tablename__ = "plantilla_asiento"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    empresa_id: Mapped[int] = mapped_column(ForeignKey("empresa.id", ondelete="CASCADE"), nullable=False, index=True)
+    codigo: Mapped[str] = mapped_column(String(40), nullable=False)
+    nombre: Mapped[str] = mapped_column(String(255), nullable=False)
+    descripcion: Mapped[Optional[str]] = mapped_column(String(500))
+    origen: Mapped[OrigenAsientoEnum] = mapped_column(SAEnum(OrigenAsientoEnum, native_enum=False, length=20), default=OrigenAsientoEnum.plantilla)
+    periodicidad: Mapped[PeriodicidadEnum] = mapped_column(SAEnum(PeriodicidadEnum, native_enum=False, length=20), default=PeriodicidadEnum.mensual)
+    activa: Mapped[bool] = mapped_column(Boolean, default=True)
+    creado_en: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    lineas: Mapped[List["LineaPlantilla"]] = relationship(
+        back_populates="plantilla", cascade="all, delete-orphan",
+        order_by="LineaPlantilla.orden",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("empresa_id", "codigo", name="uq_empresa_plantilla"),
+    )
+
+
+class LineaPlantilla(Base):
+    __tablename__ = "linea_plantilla"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    plantilla_id: Mapped[int] = mapped_column(ForeignKey("plantilla_asiento.id", ondelete="CASCADE"), nullable=False, index=True)
+    orden: Mapped[int] = mapped_column(Integer, default=0)
+    cuenta_codigo: Mapped[str] = mapped_column(String(20), nullable=False)
+    es_debe: Mapped[bool] = mapped_column(Boolean, nullable=False)  # True=Debe, False=Haber
+    # Monto: fijo en USD (se multiplica por la tasa del día) y/o parámetro de runtime
+    monto_usd: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2))
+    parametro: Mapped[Optional[str]] = mapped_column(String(60))     # p.ej. "neto_nomina", "base_iva"
+    porcentaje: Mapped[Optional[Decimal]] = mapped_column(Numeric(7, 4))  # p.ej. 0.16 sobre una base
+    descripcion: Mapped[Optional[str]] = mapped_column(String(255))
+
+    plantilla: Mapped["PlantillaAsiento"] = relationship(back_populates="lineas")
 
 
 class LogAuditoria(Base):
