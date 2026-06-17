@@ -103,7 +103,7 @@ async def _empleados_activos(empresa_id: int, db: AsyncSession):
 
 async def generar_nomina_mes(
     db: AsyncSession, *, empresa_id: int, usuario_id: int, fecha: date,
-    cuenta_pago: str = "2.2.10", aplicar_islr: bool = True, es_prueba: bool = False,
+    cuenta_pago: str = "2.2.10", aplicar_islr: bool = False, es_prueba: bool = False,
 ) -> list[str]:
     """Genera los 4 asientos de la nómina del mes de `fecha`. Devuelve sus números."""
     empleados = await _empleados_activos(empresa_id, db)
@@ -264,7 +264,7 @@ async def eliminar_empleado(
 @router.get("/calcular", response_model=list[NominaCalculadaOut])
 async def calcular_nomina(
     fecha: date = Query(default_factory=date.today),
-    aplicar_islr: bool = Query(True),
+    aplicar_islr: bool = Query(False),
     current_user: Usuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -293,7 +293,7 @@ async def calcular_nomina(
 async def generar_asiento_nomina(
     fecha: date = Query(default_factory=date.today, description="Fecha del mes (toma la tasa BCV de esa fecha)"),
     cuenta_pago: str = Query("2.2.10", description="2.2.10 socios (ene) o 1.1.03 Banco BDV (feb+)"),
-    aplicar_islr: bool = Query(True, description="False reproduce el plan (sin ISLR)"),
+    aplicar_islr: bool = Query(False, description="True retiene el %ARI sobre la base 20% (default: plan, sin ISLR)"),
     current_user: Usuario = Depends(require_roles("admin", "contador", "gerente_nomina")),
     db: AsyncSession = Depends(get_db),
 ):
