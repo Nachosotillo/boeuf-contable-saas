@@ -307,8 +307,12 @@ class NominaEmpleado(Base):
     nombre_completo: Mapped[str] = mapped_column(String(255), nullable=False)
     cargo: Mapped[Optional[str]] = mapped_column(String(100))
     tipo: Mapped[TipoNominaEnum] = mapped_column(SAEnum(TipoNominaEnum), default=TipoNominaEnum.moi)
-    salario_base: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
-    bono_alimentacion: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
+    remun_total_usd: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)   # remuneración mensual en USD
+    nivel: Mapped[Optional[int]] = mapped_column(Integer)                          # 1..4 (cestaticket)
+    salario_base: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)  # 20% (Bs, snapshot)
+    complemento_no_salarial: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)  # 80% (Bs, snapshot)
+    bono_alimentacion: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)  # cestaticket (Bs, snapshot)
+    cuenta_gasto: Mapped[Optional[str]] = mapped_column(String(20))                # devengo: 5.1.10/5.1.11/6.2.01/6.1.01
     anos_servicio: Mapped[int] = mapped_column(Integer, default=0)
     porcentaje_ari: Mapped[Decimal] = mapped_column(Numeric(7, 4), default=0)
     activo: Mapped[bool] = mapped_column(Boolean, default=True)
