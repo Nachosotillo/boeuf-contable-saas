@@ -272,6 +272,8 @@ class ArticuloInventarioCreate(BaseModel):
     tipo: TipoArticuloInventarioEnum
     unidad_medida: str = "kg"
     stock_minimo: Decimal = Field(default=0, ge=0, decimal_places=4)
+    cuenta_inventario: Optional[str] = None   # p.ej. 1.1.22.01 (PT) / 1.1.20.01 (MP)
+    cuenta_costo: Optional[str] = None         # p.ej. 5.2.01 (Costo de Ventas del SKU)
 
 
 class ArticuloInventarioUpdate(BaseModel):
@@ -279,6 +281,8 @@ class ArticuloInventarioUpdate(BaseModel):
     tipo: Optional[TipoArticuloInventarioEnum] = None
     unidad_medida: Optional[str] = None
     stock_minimo: Optional[Decimal] = None
+    cuenta_inventario: Optional[str] = None
+    cuenta_costo: Optional[str] = None
     activo: Optional[bool] = None
 
 
@@ -306,6 +310,7 @@ class MovimientoInvOut(MovimientoInvCreate):
     costo_total: Decimal
     saldo_unidades: Decimal
     saldo_valor: Decimal
+    asiento_id: Optional[int] = None
     model_config = {"from_attributes": True}
 
 
