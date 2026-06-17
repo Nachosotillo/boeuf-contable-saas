@@ -416,6 +416,9 @@ class ArticuloInventario(Base):
     unidad_medida: Mapped[str] = mapped_column(String(20), default="kg")
     stock_minimo: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0)
     stock_actual: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0)
+    # Enlace contable (promedio ponderado / continuo):
+    cuenta_inventario: Mapped[Optional[str]] = mapped_column(String(20))  # p.ej. 1.1.22.01 (PT) o 1.1.20.01 (MP)
+    cuenta_costo: Mapped[Optional[str]] = mapped_column(String(20))       # p.ej. 5.2.01 (Costo de Ventas del SKU)
     activo: Mapped[bool] = mapped_column(Boolean, default=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -443,6 +446,7 @@ class MovimientoInventario(Base):
     costo_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     saldo_unidades: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0)
     saldo_valor: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
+    asiento_id: Mapped[Optional[int]] = mapped_column(ForeignKey("asiento.id"))  # asiento de costo generado
     creado_en: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     empresa: Mapped["Empresa"] = relationship(back_populates="inventario")
