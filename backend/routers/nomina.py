@@ -1,387 +1,201 @@
 """
-Router: Nómina
-- ISLR progresivo: Calculado según % ARI del empleado
-- SSO y Paro Forzoso: Con topes de 5 y 10 salarios mínimos
-- FAOV, INCES, Protección Pensiones
-- Generación automática de asiento contable cada 30 días
+Router: Nómina — El Cuadre Frío
 
-ESTRUCTURA DEL ASIENTO (CUADRADO):
-══════════════════════════════════════════════════════════════════
-DEBE:
-  5.1.02    Mano de Obra Directa            → salario bruto MOD
-  6.2.01    Sueldos y Salarios Admin        → salario bruto MOI
-  6.2.02    Prestaciones Sociales           → SSO+RPE+FAOV+INCES patrono
-  6.2.20    Protección de Pensiones 9%      → pensiones patrono
+Genera la secuencia de 4 asientos mensuales del plan, valorados a la tasa BCV del
+mes (forward-fill por fecha). Estructura 20% salarial / 80% no salarial + cestaticket.
+Cargas patronales y retenciones SOLO sobre el salario base (20%).
 
-HABER:
-  2.1.10    Nómina por Pagar               → neto a pagar al trabajador
-  2.1.11.01 Retenciones IVSS               → SSO+RPE (emp + pat)
-  2.1.11.02 Retenciones BANAVIH            → FAOV (emp + pat)
-  2.1.13    INCES por Pagar               → INCES (emp + pat)
-  2.1.22    Pensiones por Pagar (patrono)  → pensiones patrono
-  2.1.23    Retención Pensiones Empleados  → pensiones empleado
-  2.1.30    ISLR Retenido por Enterar      → ISLR descontado al empleado ← NUEVO
+Asientos por mes (todos vía crear_asiento_interno, origen='nomina'):
+  1) DEVENGO        DEBE 5.1.10/5.1.11/6.2.01/6.1.01 (bruto por función)
+                    HABER 2.1.10 neto · 2.1.11.01 IVSS 4% · 2.1.11.02 FAOV 1%
+                          · 2.1.23 RPE 0,5% · 2.1.30 ISLR (si aplica)
+  2) APORTES PAT.   DEBE mismas cuentas de función (14% = IVSS 10 + FAOV 2 + RPE 2)
+                    HABER 2.1.11.01 · 2.1.11.02 · 2.1.23
+  3) PENSIONES 9%   DEBE 6.2.20 · HABER 2.1.12
+  4) PAGO DEL NETO  DEBE 2.1.10 · HABER cuenta_pago (2.2.10 socios / 1.1.03 banco)
 
-CUADRE MATEMÁTICO:
-  DEBE  = Σ salarios_brutos + Σ aportes_patronales + Σ pensiones_patrono
-  HABER = neto + IVSS_total + BANAVIH_total + INCES_total
-          + pensiones_total + ISLR_total
-  
-  Demostración para 1 empleado (salario S, aportes patrono AP, pensión pat PP):
-    DEBE  = S + AP + PP
-    neto  = S - (ISLR + SSO_e + RPE_e + FAOV_e + PEN_e)
-    HABER = neto + (SSO_e+SSO_p+RPE_e+RPE_p) + (FAOV_e+FAOV_p)
-            + INCES + (PEN_p) + (PEN_e) + ISLR
-          = S - ISLR - SSO_e - RPE_e - FAOV_e - PEN_e
-            + SSO_e + SSO_p + RPE_e + RPE_p
-            + FAOV_e + FAOV_p + INCES_p
-            + PEN_p + PEN_e + ISLR
-          = S + SSO_p + RPE_p + FAOV_p + INCES_p + PEN_p
-          = S + AP + PP  ✓
-══════════════════════════════════════════════════════════════════
+INCES 2%, prestaciones (Art.142) e intereses (Art.143) son TRIMESTRALES → cierre.
+
+El %ARI es entrada MANUAL por empleado (campo porcentaje_ari); el código lo aplica,
+no lo calcula. `aplicar_islr=False` reproduce el plan (sin retención de ISLR).
 """
-
 from typing import Optional
 from datetime import date, timedelta
-import calendar
 from decimal import Decimal, ROUND_HALF_UP
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from collections import defaultdict
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from database import get_db
 from models import (
-    NominaEmpleado, NominaProgramacion, Asiento, LineaAsiento,
-    CatalogoCuenta, Usuario, TipoNominaEnum,
-    TipoCuentaEnum, NaturalezaEnum, EstadoFinancieroEnum,
+    NominaEmpleado, NominaProgramacion, Usuario,
+    TipoNominaEnum, OrigenAsientoEnum,
 )
 from schemas import EmpleadoCreate, EmpleadoOut, NominaCalculadaOut
 from routers.auth import get_current_user, require_roles
-from routers.asientos import get_proximo_numero
-from routers.tasas import obtener_tasa_actual
+from routers.asientos import crear_asiento_interno
+from routers.tasas import obtener_tasa_para_fecha
 
 router = APIRouter()
+R = lambda v: Decimal(str(v)).quantize(Decimal("0.01"), ROUND_HALF_UP)
+ZERO = Decimal("0")
 
-# ─── Parámetros tributarios vigentes ─────────────────────────────────────────
+# Cestaticket en USD por nivel (se convierte a Bs por la tasa del mes)
+CESTA_USD = {1: Decimal("60"), 2: Decimal("50"), 3: Decimal("45"), 4: Decimal("40")}
 
-PARAMS = {
-    "SALARIO_MINIMO_BS":            Decimal("130.00"),
-    "INGRESO_MINIMO_PENSIONES_USD": Decimal("130.00"),
-    "SSO_EMP":   Decimal("0.04"),
-    "SSO_PAT":   Decimal("0.10"),
-    "RPE_EMP":   Decimal("0.005"),
-    "RPE_PAT":   Decimal("0.02"),
-    "FAOV_EMP":  Decimal("0.01"),
-    "FAOV_PAT":  Decimal("0.02"),
-    "INCES_EMP": Decimal("0.00"),
-    "INCES_PAT": Decimal("0.02"),
-    "PEN_EMP":   Decimal("0.00"),
-    "PEN_PAT":   Decimal("0.09"),
-}
+# Alícuotas planas sobre el salario base (20%)
+DED_EMP = {"IVSS": Decimal("0.04"), "FAOV": Decimal("0.01"), "RPE": Decimal("0.005")}
+APO_PAT = {"IVSS": Decimal("0.10"), "FAOV": Decimal("0.02"), "RPE": Decimal("0.02")}
+PEN_PAT = Decimal("0.09")
 
-# ─── Mapa de cuentas contables de nómina ─────────────────────────────────────
-# Los códigos 6.1.02-6.1.05 son Comisiones/Publicidad/Fletes/Empaques → NO tocar.
-# Los aportes patronales van a 6.2.02, pensiones a 6.2.20, ISLR a 2.1.30.
-
-CUENTAS_NOMINA = {
-    "MOD":       "5.1.02",    # Mano de Obra Directa
-    "MOI":       "6.2.01",    # Sueldos y Salarios — Administración
-    "APORTES":   "6.2.02",    # Prestaciones Sociales (SSO+RPE+FAOV+INCES patronal)
-    "PENSIONES": "6.2.20",    # Contribución Protección de Pensiones 9%
-    "NOMINA_XP": "2.1.10",    # Nómina por Pagar (neto trabajador)
-    "IVSS":      "2.1.11.01", # Retenciones y Aportes IVSS
-    "BANAVIH":   "2.1.11.02", # Retenciones y Aportes BANAVIH/FAOV
-    "INCES_XP":  "2.1.13",    # INCES por Pagar
-    "PEN_PAT":   "2.1.22",    # Protección de Pensiones por Pagar (patrono)
-    "PEN_EMP":   "2.1.23",    # Retención Protección Pensiones — Empleados
-    "ISLR_XP":   "2.1.30",    # ISLR Retenido a Empleados por Enterar ← NUEVO
-}
-
-CUENTAS_NOMINA_DEF = {
-    "5.1.02":    ("Mano de Obra Directa",                      "Deudora",   "resultado"),
-    "6.2.01":    ("Sueldos y Salarios — Administración",        "Deudora",   "resultado"),
-    "6.2.02":    ("Prestaciones Sociales — Administración",     "Deudora",   "resultado"),
-    "6.2.20":    ("Contribución Protección de Pensiones — 9%",  "Deudora",   "resultado"),
-    "2.1.10":    ("Nómina por Pagar",                           "Acreedora", "situacion"),
-    "2.1.11.01": ("Retenciones y Aportes IVSS",                 "Acreedora", "situacion"),
-    "2.1.11.02": ("Retenciones y Aportes BANAVIH",              "Acreedora", "situacion"),
-    "2.1.13":    ("INCES por Pagar",                            "Acreedora", "situacion"),
-    "2.1.22":    ("Protección de Pensiones por Pagar",          "Acreedora", "situacion"),
-    "2.1.23":    ("Retención Protección Pensiones — Empleados", "Acreedora", "situacion"),
-    "2.1.30":    ("ISLR Retenido a Empleados por Enterar",      "Acreedora", "situacion"),
-}
+# Cuentas de pasivo de nómina
+C_NETO   = "2.1.10"      # Nómina por Pagar
+C_IVSS   = "2.1.11.01"   # IVSS — aporte patronal y obrero
+C_FAOV   = "2.1.11.02"   # BANAVIH / FAOV
+C_RPE    = "2.1.23"      # Otras Retenciones de Nómina (RPE)
+C_ISLR   = "2.1.30"      # ISLR por Pagar
+C_PEN_G  = "6.2.20"      # Contribución Pensiones 9% (gasto)
+C_PEN_P  = "2.1.12"      # Protección Pensiones por Pagar — Patronal
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────────────
+def _cuenta_func(emp: NominaEmpleado) -> str:
+    if emp.cuenta_gasto:
+        return emp.cuenta_gasto
+    return "5.1.10" if emp.tipo == TipoNominaEnum.mod else "6.2.01"
 
-def get_mondays_in_month(year: int, month: int) -> int:
-    return sum(1 for w in calendar.monthcalendar(year, month) if w[0] != 0)
+
+def _calc_emp(emp: NominaEmpleado, tasa: Decimal, aplicar_islr: bool) -> dict:
+    """Calcula los montos en Bs de un empleado para una tasa dada."""
+    usd = emp.remun_total_usd or ZERO
+    base  = R(usd * Decimal("0.20") * tasa)
+    comp  = R(usd * Decimal("0.80") * tasa)
+    cesta = R(CESTA_USD.get(emp.nivel or 4, Decimal("40")) * tasa)
+    bruto = R(base + comp + cesta)
+
+    islr  = R(base * (emp.porcentaje_ari or ZERO) / Decimal("100")) if aplicar_islr else ZERO
+    ivss_e = R(base * DED_EMP["IVSS"])
+    faov_e = R(base * DED_EMP["FAOV"])
+    rpe_e  = R(base * DED_EMP["RPE"])
+    ded_e  = R(islr + ivss_e + faov_e + rpe_e)
+    neto   = R(bruto - ded_e)
+
+    ivss_p = R(base * APO_PAT["IVSS"])
+    faov_p = R(base * APO_PAT["FAOV"])
+    rpe_p  = R(base * APO_PAT["RPE"])
+    pen_p  = R(base * PEN_PAT)
+
+    return dict(func=_cuenta_func(emp), base=base, comp=comp, cesta=cesta, bruto=bruto,
+                islr=islr, ivss_e=ivss_e, faov_e=faov_e, rpe_e=rpe_e, neto=neto,
+                ivss_p=ivss_p, faov_p=faov_p, rpe_p=rpe_p, pen_p=pen_p)
 
 
-async def _resolver_cuentas(empresa_id: int, db: AsyncSession) -> dict:
-    """Devuelve {codigo: CatalogoCuenta}, creando las faltantes automáticamente."""
-    codigos = list(CUENTAS_NOMINA_DEF.keys())
+async def _empleados_activos(empresa_id: int, db: AsyncSession):
     res = await db.execute(
-        select(CatalogoCuenta).where(
-            CatalogoCuenta.empresa_id == empresa_id,
-            CatalogoCuenta.codigo.in_(codigos),
-        )
-    )
-    cuentas = {c.codigo: c for c in res.scalars().all()}
-
-    ef_map = {
-        "resultado": EstadoFinancieroEnum.resultado,
-        "situacion": EstadoFinancieroEnum.situacion,
-    }
-    for cod, (nombre, naturaleza, ef_key) in CUENTAS_NOMINA_DEF.items():
-        if cod not in cuentas:
-            db.add(CatalogoCuenta(
-                empresa_id=empresa_id,
-                codigo=cod,
-                nombre=nombre,
-                tipo=TipoCuentaEnum.cuenta,
-                naturaleza=NaturalezaEnum.deudora if naturaleza == "Deudora" else NaturalezaEnum.acreedora,
-                estado_financiero=ef_map[ef_key],
-                es_generada_auto=True,
-            ))
-            await db.flush()
-            # Re-fetch after flush to get the id
-            res2 = await db.execute(
-                select(CatalogoCuenta).where(
-                    CatalogoCuenta.empresa_id == empresa_id,
-                    CatalogoCuenta.codigo == cod,
-                )
-            )
-            cuentas[cod] = res2.scalar_one()
-
-    return cuentas
-
-
-async def calcular_nomina_empleado(
-    empleado: NominaEmpleado, tasa_bcv: Decimal, lunes_mes: int = 4
-) -> NominaCalculadaOut:
-    s = empleado.salario_base or Decimal("0")
-    r = lambda v: v.quantize(Decimal("0.01"), ROUND_HALF_UP)
-
-    fecha_ing = empleado.fecha_inicio or date.today()
-    today = date.today()
-    anos = max(0, today.year - fecha_ing.year - (
-        (today.month, today.day) < (fecha_ing.month, fecha_ing.day)
-    ))
-
-    dias_bv   = min(15 + anos, 30)
-    alic_vac  = ((s / Decimal("30")) * Decimal(str(dias_bv))) / Decimal("12")
-    alic_util = ((s / Decimal("30")) * Decimal("30")) / Decimal("12")
-    salario_integral = s + alic_vac + alic_util
-
-    ari_raw = empleado.porcentaje_ari
-    ari  = Decimal(str(ari_raw)) if ari_raw else Decimal("0")
-    islr = r((s * ari) / Decimal("100"))
-
-    base_sso = min(s, PARAMS["SALARIO_MINIMO_BS"] * Decimal("5"))
-    base_rpe = min(s, PARAMS["SALARIO_MINIMO_BS"] * Decimal("10"))
-
-    sso_sem = (base_sso * Decimal("12")) / Decimal("52")
-    sso_e   = r(sso_sem * Decimal("0.04")  * Decimal(str(lunes_mes)))
-    sso_p   = r(sso_sem * Decimal("0.10")  * Decimal(str(lunes_mes)))
-
-    rpe_sem = (base_rpe * Decimal("12")) / Decimal("52")
-    rpe_e   = r(rpe_sem * Decimal("0.005") * Decimal(str(lunes_mes)))
-    rpe_p   = r(rpe_sem * Decimal("0.02")  * Decimal(str(lunes_mes)))
-
-    faov_e = r(salario_integral * Decimal("0.01"))
-    faov_p = r(salario_integral * Decimal("0.02"))
-
-    inces_e = r(s * Decimal("0.00"))
-    inces_p = r(s * Decimal("0.02"))
-
-    tasa           = Decimal(str(tasa_bcv)) if tasa_bcv else Decimal("36.50")
-    base_pensiones = max(s, PARAMS["INGRESO_MINIMO_PENSIONES_USD"] * tasa)
-    pen_e = r(s * Decimal("0.00"))
-    pen_p = r(base_pensiones * Decimal("0.09"))
-
-    total_ded = islr + sso_e + rpe_e + faov_e + inces_e + pen_e
-    neto  = r(s - total_ded)
-    costo = r(s + sso_p + rpe_p + faov_p + inces_p + pen_p)
-
-    return NominaCalculadaOut(
-        empleado_id=empleado.id,
-        cedula=empleado.cedula,
-        nombre=empleado.nombre_completo,
-        cargo=empleado.cargo,
-        salario_base=s,
-        islr_deducido=islr,
-        sso_empleado=sso_e,
-        faov_empleado=faov_e,
-        inces_empleado=inces_e,
-        rpe_empleado=rpe_e,
-        proteccion_pensiones_emp=pen_e,
-        total_deducciones=total_ded,
-        neto_a_pagar=neto,
-        sso_patrono=sso_p,
-        faov_patrono=faov_p,
-        inces_patrono=inces_p,
-        rpe_patrono=rpe_p,
-        proteccion_pensiones_pat=pen_p,
-        costo_total_empresa=costo,
-    )
-
-
-async def _ejecutar_asiento_nomina(empresa_id: int, usuario_id: int, db: AsyncSession) -> str:
-    """
-    Genera el asiento contable de nómina. Siempre cuadra porque el ISLR
-    retenido va al HABER en la cuenta 2.1.30.
-    """
-    hoy = date.today()
-
-    result = await db.execute(
         select(NominaEmpleado).where(
             NominaEmpleado.empresa_id == empresa_id,
             NominaEmpleado.activo == True,
         )
     )
-    empleados = result.scalars().all()
+    return res.scalars().all()
+
+
+async def generar_nomina_mes(
+    db: AsyncSession, *, empresa_id: int, usuario_id: int, fecha: date,
+    cuenta_pago: str = "2.2.10", aplicar_islr: bool = True, es_prueba: bool = False,
+) -> list[str]:
+    """Genera los 4 asientos de la nómina del mes de `fecha`. Devuelve sus números."""
+    empleados = await _empleados_activos(empresa_id, db)
     if not empleados:
-        raise HTTPException(400, detail="No hay empleados activos para generar nómina")
+        raise HTTPException(400, "No hay empleados activos para generar nómina")
 
-    tasa_bcv      = await obtener_tasa_actual(db)
-    valor_bcv     = tasa_bcv.tasa_usd if tasa_bcv else Decimal("36.50")
-    lunes_del_mes = get_mondays_in_month(hoy.year, hoy.month)
+    tasa_rec = await obtener_tasa_para_fecha(db, fecha)
+    if not tasa_rec:
+        raise HTTPException(503, "No hay tasa BCV para la fecha. Ejecuta /tasas/seed-2025.")
+    tasa = tasa_rec.tasa_usd
 
-    r    = lambda v: v.quantize(Decimal("0.01"), ROUND_HALF_UP)
-    ZERO = Decimal("0")
+    calc = [_calc_emp(e, tasa, aplicar_islr) for e in empleados]
+    periodo = fecha.strftime("%m/%Y")
 
-    # Acumuladores
-    tot_sal_mod = tot_sal_moi = ZERO
-    tot_islr    = ZERO
-    tot_neto    = tot_sso_p = tot_faov_p = tot_inces_p = tot_pen_p = tot_rpe_p = ZERO
-    tot_sso_e   = tot_faov_e = tot_inces_e = tot_pen_e = tot_rpe_e = ZERO
+    # Acumular por función y totales
+    bruto_func = defaultdict(lambda: ZERO)
+    cargapat_func = defaultdict(lambda: ZERO)
+    t = defaultdict(lambda: ZERO)
+    for c in calc:
+        bruto_func[c["func"]] += c["bruto"]
+        cargapat_func[c["func"]] += R(c["ivss_p"] + c["faov_p"] + c["rpe_p"])
+        for k in ("neto", "islr", "ivss_e", "faov_e", "rpe_e",
+                  "ivss_p", "faov_p", "rpe_p", "pen_p"):
+            t[k] += c[k]
 
-    for emp in empleados:
-        c = await calcular_nomina_empleado(emp, valor_bcv, lunes_del_mes)
+    numeros = []
 
-        if emp.tipo == TipoNominaEnum.mod:
-            tot_sal_mod += emp.salario_base
-        else:
-            tot_sal_moi += emp.salario_base
-
-        tot_islr    += c.islr_deducido      # ← acumular ISLR
-        tot_neto    += c.neto_a_pagar
-        tot_sso_p   += c.sso_patrono
-        tot_faov_p  += c.faov_patrono
-        tot_inces_p += c.inces_patrono
-        tot_pen_p   += c.proteccion_pensiones_pat
-        tot_rpe_p   += c.rpe_patrono
-        tot_sso_e   += c.sso_empleado
-        tot_faov_e  += c.faov_empleado
-        tot_inces_e += c.inces_empleado
-        tot_pen_e   += c.proteccion_pensiones_emp
-        tot_rpe_e   += c.rpe_empleado
-
-    cuentas = await _resolver_cuentas(empresa_id, db)
-
-    # ── DEBE ──────────────────────────────────────────────────────────────────
-    d_mod       = r(tot_sal_mod)
-    d_moi       = r(tot_sal_moi)
-    d_aportes   = r(tot_sso_p + tot_rpe_p + tot_faov_p + tot_inces_p)
-    d_pensiones = r(tot_pen_p)
-
-    # ── HABER ─────────────────────────────────────────────────────────────────
-    h_nomina_xp = r(tot_neto)
-    h_ivss      = r(tot_sso_e + tot_sso_p + tot_rpe_e + tot_rpe_p)
-    h_banavih   = r(tot_faov_e + tot_faov_p)
-    h_inces     = r(tot_inces_e + tot_inces_p)
-    h_pen_pat   = r(tot_pen_p)
-    h_pen_emp   = r(tot_pen_e)
-    h_islr      = r(tot_islr)               # ← ISLR al pasivo
-
-    total_debe  = r(d_mod + d_moi + d_aportes + d_pensiones)
-    total_haber = r(h_nomina_xp + h_ivss + h_banavih + h_inces
-                    + h_pen_pat + h_pen_emp + h_islr)
-
-    # Validar cuadre (solo debería haber diferencias de centavos por redondeo)
-    diff = total_debe - total_haber
-    if abs(diff) > Decimal("1.00"):
-        # Si la diferencia es mayor a 1 Bs. hay un error de lógica real
-        raise HTTPException(
-            500,
-            detail=(
-                f"Error de cuadre en nómina (diferencia={diff:.2f} Bs.). "
-                f"DEBE={total_debe}, HABER={total_haber}. Contacta soporte."
-            )
-        )
-    # Diferencias de céntimos por redondeo: absorber en Nómina por Pagar
-    if diff != ZERO:
-        h_nomina_xp = r(h_nomina_xp + diff)
-        total_haber = total_debe
-
-    numero = await get_proximo_numero(empresa_id, db)
-
-    asiento = Asiento(
-        empresa_id=empresa_id,
-        numero_asiento=numero,
-        fecha=hoy,
-        mes=hoy.month,
-        descripcion=f"Nómina mensual — {len(empleados)} empleado(s)",
-        referencia=f"NOM-{hoy.strftime('%Y%m')}",
-        total_debe=total_debe,
-        total_haber=total_haber,
-        cuadra=True,
-        creado_por=usuario_id,
-    )
-    db.add(asiento)
-    await db.flush()
-
-    lineas = [
-        (CUENTAS_NOMINA["MOD"],       d_mod,        ZERO),
-        (CUENTAS_NOMINA["MOI"],       d_moi,        ZERO),
-        (CUENTAS_NOMINA["APORTES"],   d_aportes,    ZERO),
-        (CUENTAS_NOMINA["PENSIONES"], d_pensiones,  ZERO),
-        (CUENTAS_NOMINA["NOMINA_XP"], ZERO,         h_nomina_xp),
-        (CUENTAS_NOMINA["IVSS"],      ZERO,         h_ivss),
-        (CUENTAS_NOMINA["BANAVIH"],   ZERO,         h_banavih),
-        (CUENTAS_NOMINA["INCES_XP"],  ZERO,         h_inces),
-        (CUENTAS_NOMINA["PEN_PAT"],   ZERO,         h_pen_pat),
-        (CUENTAS_NOMINA["PEN_EMP"],   ZERO,         h_pen_emp),
-        (CUENTAS_NOMINA["ISLR_XP"],   ZERO,         h_islr),   # ← ISLR
+    # ── 1) DEVENGO ─────────────────────────────────────────────────────────────
+    lineas = [{"cuenta_codigo": f, "debe": R(m), "haber": 0,
+               "descripcion": "Devengo bruto (base+complemento+cestaticket)"}
+              for f, m in sorted(bruto_func.items())]
+    lineas += [
+        {"cuenta_codigo": C_NETO, "debe": 0, "haber": R(t["neto"]), "descripcion": "Neto a pagar"},
+        {"cuenta_codigo": C_IVSS, "debe": 0, "haber": R(t["ivss_e"]), "descripcion": "IVSS retención obrero 4%"},
+        {"cuenta_codigo": C_FAOV, "debe": 0, "haber": R(t["faov_e"]), "descripcion": "FAOV retención obrero 1%"},
+        {"cuenta_codigo": C_RPE,  "debe": 0, "haber": R(t["rpe_e"]),  "descripcion": "RPE retención obrero 0,5%"},
     ]
+    if aplicar_islr and t["islr"] > 0:
+        lineas.append({"cuenta_codigo": C_ISLR, "debe": 0, "haber": R(t["islr"]),
+                       "descripcion": "ISLR retenido (ARI s/ base 20%)"})
+    a = await crear_asiento_interno(
+        db, empresa_id=empresa_id, usuario_id=usuario_id, fecha=fecha,
+        origen=OrigenAsientoEnum.nomina, es_prueba=es_prueba,
+        descripcion=f"Devengo de nómina {periodo}", referencia=f"NOM-{fecha:%Y%m}-DEV",
+        lineas=lineas)
+    numeros.append(a.numero_asiento)
 
-    for codigo, debe, haber in lineas:
-        if debe == ZERO and haber == ZERO:
-            continue
-        db.add(LineaAsiento(
-            asiento_id=asiento.id,
-            cuenta_id=cuentas[codigo].id,
-            debe=r(debe),
-            haber=r(haber),
-        ))
+    # ── 2) APORTES PATRONALES (14%) ────────────────────────────────────────────
+    lineas = [{"cuenta_codigo": f, "debe": R(m), "haber": 0,
+               "descripcion": "Carga patronal IVSS+FAOV+RPE (14%)"}
+              for f, m in sorted(cargapat_func.items())]
+    lineas += [
+        {"cuenta_codigo": C_IVSS, "debe": 0, "haber": R(t["ivss_p"]), "descripcion": "IVSS aporte patronal 10%"},
+        {"cuenta_codigo": C_FAOV, "debe": 0, "haber": R(t["faov_p"]), "descripcion": "FAOV aporte patronal 2%"},
+        {"cuenta_codigo": C_RPE,  "debe": 0, "haber": R(t["rpe_p"]),  "descripcion": "RPE aporte patronal 2%"},
+    ]
+    a = await crear_asiento_interno(
+        db, empresa_id=empresa_id, usuario_id=usuario_id, fecha=fecha,
+        origen=OrigenAsientoEnum.nomina, es_prueba=es_prueba,
+        descripcion=f"Aportes patronales de nómina {periodo}", referencia=f"NOM-{fecha:%Y%m}-PAT",
+        lineas=lineas)
+    numeros.append(a.numero_asiento)
 
-    await db.commit()
-    return numero
+    # ── 3) PENSIONES 9% ────────────────────────────────────────────────────────
+    if t["pen_p"] > 0:
+        a = await crear_asiento_interno(
+            db, empresa_id=empresa_id, usuario_id=usuario_id, fecha=fecha,
+            origen=OrigenAsientoEnum.nomina, es_prueba=es_prueba,
+            descripcion=f"Contribución Protección Pensiones 9% {periodo}",
+            referencia=f"NOM-{fecha:%Y%m}-PEN",
+            lineas=[
+                {"cuenta_codigo": C_PEN_G, "debe": R(t["pen_p"]), "haber": 0,
+                 "descripcion": "Pensiones 9% s/ base"},
+                {"cuenta_codigo": C_PEN_P, "debe": 0, "haber": R(t["pen_p"]),
+                 "descripcion": "Pensiones por pagar patronal"},
+            ])
+        numeros.append(a.numero_asiento)
 
+    # ── 4) PAGO DEL NETO ───────────────────────────────────────────────────────
+    a = await crear_asiento_interno(
+        db, empresa_id=empresa_id, usuario_id=usuario_id, fecha=fecha,
+        origen=OrigenAsientoEnum.nomina, es_prueba=es_prueba,
+        descripcion=f"Pago neto de nómina {periodo}", referencia=f"NOM-{fecha:%Y%m}-PAGO",
+        lineas=[
+            {"cuenta_codigo": C_NETO,     "debe": R(t["neto"]), "haber": 0,
+             "descripcion": "Cancelación nómina por pagar"},
+            {"cuenta_codigo": cuenta_pago, "debe": 0, "haber": R(t["neto"]),
+             "descripcion": "Pago del neto al personal"},
+        ])
+    numeros.append(a.numero_asiento)
 
-async def _programar_proximo_pago(empresa_id: int, db: AsyncSession):
-    """Crea o actualiza NominaProgramacion. Próxima fecha = hoy + 30 días."""
-    hoy     = date.today()
-    proxima = hoy + timedelta(days=30)
-
-    res = await db.execute(
-        select(NominaProgramacion).where(NominaProgramacion.empresa_id == empresa_id)
-    )
-    prog = res.scalar_one_or_none()
-
-    if prog:
-        if prog.proxima_fecha <= hoy:
-            prog.proxima_fecha    = proxima
-            prog.ultima_ejecucion = hoy
-    else:
-        db.add(NominaProgramacion(
-            empresa_id=empresa_id,
-            proxima_fecha=proxima,
-            ultima_ejecucion=hoy,
-            intervalo_dias=30,
-        ))
-    await db.flush()
+    return numeros
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -389,43 +203,28 @@ async def _programar_proximo_pago(empresa_id: int, db: AsyncSession):
 @router.post("/empleados", response_model=EmpleadoOut, status_code=201)
 async def crear_empleado(
     data: EmpleadoCreate,
-    background_tasks: BackgroundTasks,
     current_user: Usuario = Depends(require_roles("admin", "contador", "gerente_nomina")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Alta de empleado. Programa automáticamente el primer pago a 30 días."""
-    result = await db.execute(
+    res = await db.execute(
         select(NominaEmpleado).where(
             NominaEmpleado.empresa_id == current_user.empresa_id,
             NominaEmpleado.cedula == data.cedula,
         )
     )
-    existing = result.scalar_one_or_none()
-
-    if existing:
-        if existing.activo:
-            raise HTTPException(400, detail=f"Ya existe un empleado activo con cédula {data.cedula}")
-        for key, value in data.model_dump().items():
-            setattr(existing, key, value)
-        existing.porcentaje_ari = Decimal(str(data.porcentaje_ari))
-        existing.activo = True
-        await db.flush()
-        await db.commit()
-        await db.refresh(existing)
-        emp_out = EmpleadoOut.model_validate(existing)
+    emp = res.scalar_one_or_none()
+    payload = data.model_dump()
+    if emp:
+        for k, v in payload.items():
+            setattr(emp, k, v)
+        emp.activo = True
     else:
-        emp_data = data.model_dump()
-        emp_data["porcentaje_ari"] = Decimal(str(data.porcentaje_ari))
-        emp = NominaEmpleado(**emp_data, empresa_id=current_user.empresa_id)
+        emp = NominaEmpleado(**payload, empresa_id=current_user.empresa_id)
         db.add(emp)
-        await db.flush()
-        await db.commit()
-        await db.refresh(emp)
-        emp_out = EmpleadoOut.model_validate(emp)
-
-    await _programar_proximo_pago(current_user.empresa_id, db)
+    await db.flush()
     await db.commit()
-    return emp_out
+    await db.refresh(emp)
+    return EmpleadoOut.model_validate(emp)
 
 
 @router.get("/empleados", response_model=list[EmpleadoOut])
@@ -433,35 +232,13 @@ async def listar_empleados(
     current_user: Usuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
+    res = await db.execute(
         select(NominaEmpleado).where(
             NominaEmpleado.empresa_id == current_user.empresa_id,
             NominaEmpleado.activo == True,
-        )
+        ).order_by(NominaEmpleado.nombre_completo)
     )
-    return [EmpleadoOut.model_validate(e) for e in result.scalars().all()]
-
-
-@router.get("/calcular", response_model=list[NominaCalculadaOut])
-async def calcular_nomina(
-    mes: int = Query(default=date.today().month, ge=1, le=12),
-    anio: int = Query(default=date.today().year),
-    lunes: Optional[int] = Query(None, description="Forzar cantidad de lunes del mes"),
-    current_user: Usuario = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Calcula la nómina completa sin persistir."""
-    result = await db.execute(
-        select(NominaEmpleado).where(
-            NominaEmpleado.empresa_id == current_user.empresa_id,
-            NominaEmpleado.activo == True,
-        )
-    )
-    empleados = result.scalars().all()
-    lunes_del_mes = lunes if lunes else get_mondays_in_month(anio, mes)
-    tasa_bcv  = await obtener_tasa_actual(db)
-    valor_bcv = tasa_bcv.tasa_usd if tasa_bcv else Decimal("36.50")
-    return [await calcular_nomina_empleado(e, valor_bcv, lunes_del_mes) for e in empleados]
+    return [EmpleadoOut.model_validate(e) for e in res.scalars().all()]
 
 
 @router.delete("/empleados/{emp_id}")
@@ -470,101 +247,96 @@ async def eliminar_empleado(
     current_user: Usuario = Depends(require_roles("admin", "contador", "gerente_nomina")),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
+    res = await db.execute(
         select(NominaEmpleado).where(
             NominaEmpleado.id == emp_id,
             NominaEmpleado.empresa_id == current_user.empresa_id,
         )
     )
-    emp = result.scalar_one_or_none()
+    emp = res.scalar_one_or_none()
     if not emp:
-        raise HTTPException(404, detail="Empleado no encontrado")
+        raise HTTPException(404, "Empleado no encontrado")
     emp.activo = False
     await db.commit()
-    return {"message": "Empleado desactivado"}
+    return {"mensaje": "Empleado desactivado"}
+
+
+@router.get("/calcular", response_model=list[NominaCalculadaOut])
+async def calcular_nomina(
+    fecha: date = Query(default_factory=date.today),
+    aplicar_islr: bool = Query(True),
+    current_user: Usuario = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Vista previa (no persiste) de la nómina a la tasa de `fecha`."""
+    empleados = await _empleados_activos(current_user.empresa_id, db)
+    tasa_rec = await obtener_tasa_para_fecha(db, fecha)
+    tasa = tasa_rec.tasa_usd if tasa_rec else Decimal("57.97")
+    out = []
+    for e in empleados:
+        c = _calc_emp(e, tasa, aplicar_islr)
+        out.append(NominaCalculadaOut(
+            empleado_id=e.id, cedula=e.cedula, nombre=e.nombre_completo, cargo=e.cargo,
+            salario_base=c["base"], islr_deducido=c["islr"],
+            sso_empleado=c["ivss_e"], faov_empleado=c["faov_e"], inces_empleado=ZERO,
+            rpe_empleado=c["rpe_e"], proteccion_pensiones_emp=ZERO,
+            total_deducciones=R(c["islr"] + c["ivss_e"] + c["faov_e"] + c["rpe_e"]),
+            neto_a_pagar=c["neto"],
+            sso_patrono=c["ivss_p"], faov_patrono=c["faov_p"], inces_patrono=ZERO,
+            rpe_patrono=c["rpe_p"], proteccion_pensiones_pat=c["pen_p"],
+            costo_total_empresa=R(c["bruto"] + c["ivss_p"] + c["faov_p"] + c["rpe_p"] + c["pen_p"]),
+        ))
+    return out
 
 
 @router.post("/generar-asiento")
 async def generar_asiento_nomina(
+    fecha: date = Query(default_factory=date.today, description="Fecha del mes (toma la tasa BCV de esa fecha)"),
+    cuenta_pago: str = Query("2.2.10", description="2.2.10 socios (ene) o 1.1.03 Banco BDV (feb+)"),
+    aplicar_islr: bool = Query(True, description="False reproduce el plan (sin ISLR)"),
     current_user: Usuario = Depends(require_roles("admin", "contador", "gerente_nomina")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Genera el asiento de nómina y reprograma el próximo pago a +30 días."""
-    numero = await _ejecutar_asiento_nomina(
-        empresa_id=current_user.empresa_id,
-        usuario_id=current_user.id,
-        db=db,
+    """Genera los 4 asientos de la nómina del mes y los persiste."""
+    numeros = await generar_nomina_mes(
+        db, empresa_id=current_user.empresa_id, usuario_id=current_user.id,
+        fecha=fecha, cuenta_pago=cuenta_pago, aplicar_islr=aplicar_islr,
     )
-    await _programar_proximo_pago(current_user.empresa_id, db)
+    await _programar_proximo_pago(current_user.empresa_id, fecha, db)
     await db.commit()
-    return {
-        "numero_asiento": numero,
-        "mensaje": "Asiento de nómina generado correctamente",
-        "proximo_pago": (date.today() + timedelta(days=30)).isoformat(),
-    }
+    return {"asientos": numeros, "mensaje": f"Nómina {fecha:%m/%Y} generada ({len(numeros)} asientos)"}
+
+
+async def _programar_proximo_pago(empresa_id: int, fecha: date, db: AsyncSession):
+    proxima = fecha + timedelta(days=30)
+    res = await db.execute(
+        select(NominaProgramacion).where(NominaProgramacion.empresa_id == empresa_id)
+    )
+    prog = res.scalar_one_or_none()
+    if prog:
+        prog.proxima_fecha = proxima
+        prog.ultima_ejecucion = fecha
+    else:
+        db.add(NominaProgramacion(empresa_id=empresa_id, proxima_fecha=proxima,
+                                  ultima_ejecucion=fecha, intervalo_dias=30))
+    await db.flush()
 
 
 @router.get("/programacion")
-async def ver_programacion_nomina(
+async def ver_programacion(
     current_user: Usuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Devuelve la fecha del próximo pago de nómina programado."""
     res = await db.execute(
-        select(NominaProgramacion).where(
-            NominaProgramacion.empresa_id == current_user.empresa_id
-        )
+        select(NominaProgramacion).where(NominaProgramacion.empresa_id == current_user.empresa_id)
     )
     prog = res.scalar_one_or_none()
     if not prog:
-        return {"mensaje": "No hay nómina programada aún. Agrega empleados primero."}
-    hoy  = date.today()
-    dias = (prog.proxima_fecha - hoy).days
-    return {
-        "proxima_fecha":    prog.proxima_fecha.isoformat(),
-        "ultima_ejecucion": prog.ultima_ejecucion.isoformat() if prog.ultima_ejecucion else None,
-        "dias_restantes":   max(0, dias),
-        "vencida":          dias < 0,
-    }
-
-
-@router.post("/ejecutar-automatico")
-async def ejecutar_nomina_automatica(
-    current_user: Usuario = Depends(require_roles("admin", "contador", "gerente_nomina")),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Llama a este endpoint desde n8n o cron diariamente.
-    Solo genera el asiento si la fecha programada ya llegó o venció.
-    """
-    res = await db.execute(
-        select(NominaProgramacion).where(
-            NominaProgramacion.empresa_id == current_user.empresa_id
-        )
-    )
-    prog = res.scalar_one_or_none()
-
-    if not prog:
-        return {"ejecutado": False, "motivo": "No hay nómina programada"}
-
+        return {"mensaje": "No hay nómina programada aún."}
     hoy = date.today()
-    if prog.proxima_fecha > hoy:
-        dias = (prog.proxima_fecha - hoy).days
-        return {
-            "ejecutado": False,
-            "motivo": f"Próximo pago en {dias} día(s) ({prog.proxima_fecha.isoformat()})",
-        }
-
-    numero = await _ejecutar_asiento_nomina(
-        empresa_id=current_user.empresa_id,
-        usuario_id=current_user.id,
-        db=db,
-    )
-    await _programar_proximo_pago(current_user.empresa_id, db)
-    await db.commit()
-
     return {
-        "ejecutado":      True,
-        "numero_asiento": numero,
-        "proximo_pago":   (hoy + timedelta(days=30)).isoformat(),
+        "proxima_fecha": prog.proxima_fecha.isoformat(),
+        "ultima_ejecucion": prog.ultima_ejecucion.isoformat() if prog.ultima_ejecucion else None,
+        "dias_restantes": max(0, (prog.proxima_fecha - hoy).days),
+        "vencida": prog.proxima_fecha < hoy,
     }
