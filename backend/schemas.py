@@ -213,6 +213,10 @@ class EmpleadoCreate(BaseModel):
     tipo: TipoNominaEnum = TipoNominaEnum.moi
     salario_base: Decimal = Field(..., gt=0, decimal_places=2)
     bono_alimentacion: Decimal = Field(default=Decimal("0.00"), ge=0, decimal_places=2)
+    remun_total_usd: Decimal = Field(default=Decimal("0.00"), ge=0, decimal_places=2)
+    nivel: Optional[int] = Field(default=None, ge=1, le=4)
+    complemento_no_salarial: Decimal = Field(default=Decimal("0.00"), ge=0, decimal_places=2)
+    cuenta_gasto: Optional[str] = None
     anos_servicio: int = Field(default=0, ge=0)
     # FIX: Se eliminó decimal_places=4 como validador estricto y se reemplaza
     # por un @field_validator que redondea explícitamente a 4 decimales.
