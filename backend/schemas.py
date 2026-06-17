@@ -350,7 +350,11 @@ class LibroIvaCompraCreate(BaseModel):
     base_imponible: Decimal = Field(..., gt=0, decimal_places=2)
     alicuota_iva: Decimal = Field(default=Decimal("0.16"), ge=0, le=1)
     paga_en_divisas: bool = False  # Activa IGTF 3%
-    cliente_es_spe: bool = False   # Activa retención 75%
+    cliente_es_spe: bool = False   # La empresa retiene 75% al proveedor
+    # Contrapartidas del asiento (se genera automáticamente si generar_asiento=True)
+    cuenta_debito: str = "1.1.20.01"   # qué se compra (MP por defecto)
+    cuenta_pago: str = "2.1.01"        # cómo se paga (CxP MP por defecto)
+    generar_asiento: bool = True
 
 
 class LibroIvaVentaCreate(BaseModel):
@@ -361,6 +365,10 @@ class LibroIvaVentaCreate(BaseModel):
     base_imponible: Decimal = Field(..., gt=0, decimal_places=2)
     alicuota_iva: Decimal = Field(default=Decimal("0.16"), ge=0, le=1)
     cliente_es_spe: bool = False
+    # Contrapartidas del asiento
+    cuenta_cobro: str = "1.1.10"            # 1.1.10 CxC (crédito) o 1.1.01 Caja (contado)
+    cuenta_venta: Optional[str] = None      # 4.1.0x.01 Mayor / 4.1.0x.02 Detal (requerida si genera asiento)
+    generar_asiento: bool = True
 
 
 class LibroIvaCompraOut(BaseModel):
@@ -376,6 +384,7 @@ class LibroIvaCompraOut(BaseModel):
     iva_neto_pagado: Decimal
     igtf_aplicado: Decimal
     total_factura: Decimal
+    asiento_id: Optional[int] = None
     model_config = {"from_attributes": True}
 
 
@@ -392,6 +401,7 @@ class LibroIvaVentaOut(BaseModel):
     iva_neto_cobrado: Decimal
     total_factura: Decimal
     cliente_es_spe: bool
+    asiento_id: Optional[int] = None
     model_config = {"from_attributes": True}
 
 
