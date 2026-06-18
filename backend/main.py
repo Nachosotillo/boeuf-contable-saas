@@ -26,7 +26,8 @@ from database import engine, Base, AsyncSessionLocal
 from routers import (
     auth, empresas, catalogo, asientos, ajustes,
     reportes, seniat, nomina, inventario, activos,
-    iva, igtf, retenciones, tasas
+    iva, igtf, retenciones, tasas,
+    setup, export_sheets, export_libros,   # NUEVOS
 )
 from tasks.scheduler import start_scheduler
 
@@ -172,6 +173,9 @@ app.include_router(iva.router,         prefix="/api/v1/iva",         tags=["IVA"
 app.include_router(igtf.router,        prefix="/api/v1/igtf",        tags=["IGTF"])
 app.include_router(retenciones.router, prefix="/api/v1/retenciones", tags=["Retenciones ISLR"])
 app.include_router(tasas.router,       prefix="/api/v1/tasas",       tags=["Tasas BCV"])
+app.include_router(setup.router,         prefix="/api/v1/setup",   tags=["Setup Clase 2025"])      # NUEVO
+app.include_router(export_sheets.router, prefix="/api/v1/export",  tags=["Export CSV (Sheets)"])   # NUEVO
+app.include_router(export_libros.router, prefix="/api/v1/libros",  tags=["Libros Legales (XLSX)"]) # NUEVO
 
 
 @app.get("/", tags=["Health"])
