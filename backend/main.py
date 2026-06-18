@@ -110,8 +110,8 @@ async def _sembrar_cuenta(seed: dict, db) -> None:
         )
         emp = res_emp.scalar_one_or_none()
         if emp:
-            await sembrar_catalogo_default(emp.id, db)
-            await db.commit()
+            #await sembrar_catalogo_default(emp.id, db)
+            #await db.commit()
             logger.info(f"Catálogo actualizado para: {seed['empresa_nombre']}")
 
 
