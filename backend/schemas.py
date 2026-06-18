@@ -100,8 +100,8 @@ class CuentaOut(CuentaCreate):
 
 class LineaAsientoIn(BaseModel):
     cuenta_codigo: str
-    debe: Decimal = Field(ge=0, decimal_places=2)
-    haber: Decimal = Field(ge=0, decimal_places=2)
+    debe: Decimal = Field(ge=0)
+    haber: Decimal = Field(ge=0)
     moneda: str = "VES"
     tasa_cambio_aplicada: Optional[Decimal] = None
     descripcion: Optional[str] = None
@@ -170,8 +170,8 @@ class AsientoOut(BaseModel):
 
 class LineaAjusteIn(BaseModel):
     cuenta_codigo: str
-    debe: Decimal = Field(ge=0, decimal_places=2)
-    haber: Decimal = Field(ge=0, decimal_places=2)
+    debe: Decimal = Field(ge=0)
+    haber: Decimal = Field(ge=0)
     descripcion: Optional[str] = None
 
 
@@ -211,14 +211,14 @@ class EmpleadoCreate(BaseModel):
     nombre_completo: str = Field(..., min_length=2, max_length=255)
     cargo: Optional[str] = None
     tipo: TipoNominaEnum = TipoNominaEnum.moi
-    salario_base: Decimal = Field(..., gt=0, decimal_places=2)
-    bono_alimentacion: Decimal = Field(default=Decimal("0.00"), ge=0, decimal_places=2)
-    remun_total_usd: Decimal = Field(default=Decimal("0.00"), ge=0, decimal_places=2)
+    salario_base: Decimal = Field(..., gt=0)
+    bono_alimentacion: Decimal = Field(default=Decimal("0.00"), ge=0)
+    remun_total_usd: Decimal = Field(default=Decimal("0.00"), ge=0)
     nivel: Optional[int] = Field(default=None, ge=1, le=4)
-    complemento_no_salarial: Decimal = Field(default=Decimal("0.00"), ge=0, decimal_places=2)
+    complemento_no_salarial: Decimal = Field(default=Decimal("0.00"), ge=0)
     cuenta_gasto: Optional[str] = None
     anos_servicio: int = Field(default=0, ge=0)
-    # FIX: Se eliminó decimal_places=4 como validador estricto y se reemplaza
+    # FIX: Se eliminó  como validador estricto y se reemplaza
     # por un @field_validator que redondea explícitamente a 4 decimales.
     # Esto evita que Pydantic rechace o corrompa valores como "2.79" (2 decimales).
     porcentaje_ari: Decimal = Field(default=Decimal("0.0000"), ge=0, lt=100)
@@ -275,7 +275,7 @@ class ArticuloInventarioCreate(BaseModel):
     descripcion: str = Field(..., min_length=2, max_length=255)
     tipo: TipoArticuloInventarioEnum
     unidad_medida: str = "kg"
-    stock_minimo: Decimal = Field(default=0, ge=0, decimal_places=4)
+    stock_minimo: Decimal = Field(default=0, ge=0)
     cuenta_inventario: Optional[str] = None   # p.ej. 1.1.22.01 (PT) / 1.1.20.01 (MP)
     cuenta_costo: Optional[str] = None         # p.ej. 5.2.01 (Costo de Ventas del SKU)
 
@@ -305,8 +305,8 @@ class MovimientoInvCreate(BaseModel):
     tipo: TipoMovimientoInvEnum
     lote: Optional[str] = None
     fecha_vencimiento: Optional[date] = None
-    cantidad: Decimal = Field(..., gt=0, decimal_places=4)
-    costo_unitario: Decimal = Field(..., ge=0, decimal_places=4)
+    cantidad: Decimal = Field(..., gt=0)
+    costo_unitario: Decimal = Field(..., ge=0)
 
 
 class MovimientoInvOut(MovimientoInvCreate):
@@ -324,7 +324,7 @@ class ActivoFijoCreate(BaseModel):
     codigo_activo: str = Field(..., min_length=2, max_length=50)
     descripcion: str = Field(..., min_length=2, max_length=255)
     fecha_compra: date
-    costo_original: Decimal = Field(..., gt=0, decimal_places=2)
+    costo_original: Decimal = Field(..., gt=0)
     vida_util_anos: int = Field(..., gt=0)
     cuenta_activo_codigo: Optional[str] = None
     cuenta_depreciacion_codigo: Optional[str] = None
@@ -347,7 +347,7 @@ class LibroIvaCompraCreate(BaseModel):
     numero_factura: str
     proveedor: str
     rif_proveedor: str = Field(..., pattern=r"^[JVGEjvge]-\d{8}-\d$")
-    base_imponible: Decimal = Field(..., gt=0, decimal_places=2)
+    base_imponible: Decimal = Field(..., gt=0)
     alicuota_iva: Decimal = Field(default=Decimal("0.16"), ge=0, le=1)
     paga_en_divisas: bool = False  # Activa IGTF 3%
     cliente_es_spe: bool = False   # La empresa retiene 75% al proveedor
@@ -362,7 +362,7 @@ class LibroIvaVentaCreate(BaseModel):
     numero_factura: str
     cliente: str
     rif_cliente: str
-    base_imponible: Decimal = Field(..., gt=0, decimal_places=2)
+    base_imponible: Decimal = Field(..., gt=0)
     alicuota_iva: Decimal = Field(default=Decimal("0.16"), ge=0, le=1)
     cliente_es_spe: bool = False
     # Contrapartidas del asiento
@@ -413,8 +413,8 @@ class OperacionIgtfCreate(BaseModel):
     cliente_pagador: str
     rif: str
     moneda: str = "USD"
-    tasa_bcv: Decimal = Field(..., gt=0, decimal_places=4)
-    monto_divisas: Decimal = Field(..., gt=0, decimal_places=4)
+    tasa_bcv: Decimal = Field(..., gt=0)
+    monto_divisas: Decimal = Field(..., gt=0)
 
 
 class OperacionIgtfOut(OperacionIgtfCreate):
@@ -444,7 +444,7 @@ class RetencionIslrCreate(BaseModel):
     beneficiario_nombre: str
     beneficiario_rif: str
     concepto: str
-    monto_bruto: Decimal = Field(..., gt=0, decimal_places=2)
+    monto_bruto: Decimal = Field(..., gt=0)
 
     @field_validator("concepto")
     @classmethod
