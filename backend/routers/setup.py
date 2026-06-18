@@ -132,7 +132,7 @@ async def setup_clase_2025(
     emp, uid = current_user.empresa_id, current_user.id
     resumen = {}
 
-    resumen["catalogo"]   = await sembrar_catalogo_default(emp, db)
+    #resumen["catalogo"]   = await sembrar_catalogo_default(emp, db)
     resumen["tasas"]      = await sembrar_tasas_2025(db, sobrescribir=False)
     resumen["articulos"]  = await _sembrar_articulos_pt(emp, db)
     resumen["empleados"]  = await sembrar_empleados(emp, db)
