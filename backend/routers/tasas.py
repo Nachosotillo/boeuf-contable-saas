@@ -107,9 +107,9 @@ async def historico_tasas(
 
 class TasaManualIn(BaseModel):
     fecha: date
-    tasa_usd: Decimal = Field(..., gt=0, decimal_places=4)
-    tasa_eur: Optional[Decimal] = Field(default=None, gt=0, decimal_places=4)
-    tasa_cny: Optional[Decimal] = Field(default=None, gt=0, decimal_places=4)
+    tasa_usd: Decimal = Field(..., gt=0)
+    tasa_eur: Optional[Decimal] = Field(default=None, gt=0)
+    tasa_cny: Optional[Decimal] = Field(default=None, gt=0)
 
 
 @router.post("/manual", response_model=TasaBcvOut)
